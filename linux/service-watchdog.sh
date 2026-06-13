@@ -18,6 +18,7 @@ DRY_RUN=0
 #   - Add or remove names in the SERVICES array below. #
 #   - Example: SERVICES=("nginx" "sshd" "postgres")    #
 ########################################################
+
 SERVICES=("nginx" "sshd")
 
 ####################################################################
