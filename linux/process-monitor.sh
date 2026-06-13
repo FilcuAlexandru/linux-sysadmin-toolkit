@@ -18,6 +18,7 @@ DRY_RUN=0
 #   - Add or remove names in the PROCESSES array below. #
 #   - Example: PROCESSES=("nginx" "sshd" "postgres")    #
 #########################################################
+
 PROCESSES=("nginx" "sshd")
 
 ###################################################################
