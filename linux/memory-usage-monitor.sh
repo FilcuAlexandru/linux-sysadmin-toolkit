@@ -9,7 +9,7 @@
 ##################################################################################################
 
 set -euo pipefail
-export LC_ALL=C   # stable decimal separator regardless of locale
+export LC_ALL=C # stable decimal separator regardless of locale
 
 readonly VERSION="0.1"
 readonly THRESHOLD=80
