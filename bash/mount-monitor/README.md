@@ -12,10 +12,13 @@ Reads directly from the kernel (`/proc/self/mounts`) with automatic fallback to 
 - **Multi-mount support** — configure any number of mountpoints in a single array.
 - **Color-coded terminal output** — green for mounted, red for not mounted; automatically suppressed in cron, pipes, and container logs.
 - **Email alerts with rate-limiting** — optional notifications via `mail(1)`, throttled to a configurable interval (default: 1 per hour). Supports multiple recipients.
+- **Recovery notifications** — sends a single email when all mounts come back after an alert (ALERT → OK transition).
+- **Alert deduplication** — alerts fire once on the OK → ALERT transition and are suppressed on every subsequent run until mounts recover. Prevents repeated emails during a sustained outage.
+- **Maintenance mode** — toggle alert suppression for planned downtime with `--maintenance`. State persists across runs.
 - **Structured logging** — optional execution log (every run) and error log (only issues), with automatic rotation and retention-based pruning.
 - **Monitoring integration** — `alert()` function designed as a seam for Checkmk, Grafana, Prometheus, or any external system.
 - **Container-ready** — custom hostname labels, graceful degradation on read-only filesystems and minimal images, no hard dependencies beyond Bash.
-- **Dry-run mode** — preview all actions (alerts, emails, logging decisions) without actually firing anything.
+- **Dry-run mode** — check prerequisites and preview all actions (alerts, emails, logging decisions) without actually firing anything.
 - **Self-contained configuration** — all settings live inside the script; cron entries and container commands stay clean.
 - **Distro-agnostic** — no package manager, no distro-specific paths, no compiled dependencies.
 
@@ -28,6 +31,7 @@ Reads directly from the kernel (`/proc/self/mounts`) with automatic fallback to 
 - **`mail` command** (optional; only needed for email alerts).
 - **A configured MTA/relay** (optional; only needed for email delivery).
 - **`find` command** (optional; only needed for log rotation. If missing, rotation is silently skipped).
+- **`flock` command** (optional; only needed to prevent overlapping cron runs. If missing, locking is silently skipped).
 
 No other dependencies. The script does not require `root`, though it needs read access to `/proc/self/mounts` and to the mountpoints being checked.
 
@@ -94,14 +98,14 @@ MOUNTS=("/mnt/data" "/mnt/backup" "/srv/nfs" "/mnt/san-vol01")
 ```bash
 ALERT_EMAIL=""
 EMAIL_INTERVAL="3600"
-STATE_FILE="${TMPDIR:-/tmp}/mount-monitor.email.state"
+STATE_FILE="${SCRIPT_DIR}/mount-monitor.email.state"
 ```
 
 | Variable | Default | Description |
 |---|---|---|
 | `ALERT_EMAIL` | `""` *(disabled)* | One or more recipients, space-separated. Leave empty to disable. |
 | `EMAIL_INTERVAL` | `3600` (1 hour) | Minimum seconds between emails. Console alerts are always shown. |
-| `STATE_FILE` | `/tmp/mount-monitor.email.state` | Stores the timestamp of the last sent email. |
+| `STATE_FILE` | `<script_dir>/mount-monitor.email.state` | Stores the timestamp of the last sent email. |
 
 #### Single recipient
 
@@ -167,12 +171,13 @@ The resolution order when `HOSTNAME_LABEL` is empty: `$HOSTNAME` environment var
 ## Usage
 
 ```
-Usage: mount-monitor.sh [--dry-run] [--version] [--help]
+Usage: mount-monitor.sh [--dry-run] [--maintenance] [--version] [--help]
 
 Options:
-  --dry-run   Preview the alert action (and email decision) without firing it
-  --version   Show version and exit
-  --help      Show this help and exit
+  --dry-run       Check prerequisites and preview all actions without performing them
+  --maintenance   Toggle maintenance mode (suppresses alerts while active)
+  --version       Show version and exit
+  --help          Show this help and exit
 ```
 
 ### Basic run
@@ -189,16 +194,56 @@ ALERT: Mountpoints not mounted on app-prod-01: /mnt/backup
 
 ### Dry-run
 
+Prints a full prerequisites report (tools available, active configuration, current state) and then previews every action the script would take — without writing any files, sending any emails, or updating any state.
+
 ```bash
 ./mount-monitor.sh --dry-run
 ```
 
 ```
+Prerequisites:
+  /proc/self/mounts            OK
+  mountpoint                   OK (fallback)
+  mount                        OK (fallback)
+  mail                         MISSING (email will not work)
+  flock                        OK
+  find                         OK
+
+Configuration:
+  Host ID:                     app-prod-01
+  Mounts:                      /mnt/data /mnt/backup
+  E-Mail:                      DISABLED
+  Error log:                   /opt/scripts/logs/mount-monitor-error.log
+  Execution log:               /opt/scripts/logs/mount-monitor-execution.log
+  Log retention:               14 days
+
+State:
+  Current status:              OK
+  Maintenance mode:            off
+  Last email:                  never
+  Lock directory writable:     OK
+
 /mnt/data                      mounted
 /mnt/backup                    NOT mounted
 [dry-run] would raise alert: /mnt/backup
-[dry-run] would email: ops@example.com dev@example.com (last sent: 1200s ago)
+[dry-run] would email: ops@example.com (last sent: 1200s ago)
 ```
+
+### Maintenance mode
+
+Toggle alert suppression for planned downtime. The state persists across runs until toggled off.
+
+```bash
+# Enable maintenance mode (alerts suppressed).
+./mount-monitor.sh --maintenance
+# Maintenance mode enabled
+
+# Disable maintenance mode (alerts resume).
+./mount-monitor.sh --maintenance
+# Maintenance mode disabled
+```
+
+While maintenance mode is active, the script still checks and logs mountpoints — only alerting (console and email) is suppressed.
 
 ---
 
@@ -210,30 +255,39 @@ ALERT: Mountpoints not mounted on app-prod-01: /mnt/backup
 
 2. **`mountpoint -q`** (fallback 1) — from `util-linux`. Used only if `/proc/self/mounts` is not readable.
 
-3. **`mount` command** (fallback 2) — output parsed with `awk`. Used only if neither of the above is available.
+3. **`mount` command`** (fallback 2) — output parsed with `awk`. Used only if neither of the above is available.
 
 If no source is available, the script exits with a clear error. In practice, `/proc/self/mounts` is always present.
 
 ### Alert flow
 
+Alerts fire once per state transition, not once per cron run. This prevents alert storms during sustained outages.
+
 ```
 Mountpoint check
     │
-    ├── All mounted ──── Green status ── Log "all mounted" ── Exit
+    ├── All mounted
+    │       │
+    │       ├── Status was ALERT ──── Send recovery email ── Set status OK
+    │       └── Status was OK    ──── Log "all mounted" ──── Exit
     │
     └── Some not mounted
             │
-            ├── Red status (always)
-            ├── Log to ERROR_LOG (if enabled)
-            ├── Log to EXECUTION_LOG (if enabled)
-            │
-            └── Email?
-                 ├── ALERT_EMAIL empty ──── Skip
-                 ├── 'mail' not found ───── Warn, skip
-                 ├── Rate-limited ────────── Skip (notice on stderr)
-                 └── Interval passed ─────── Send to all recipients
-                                              └── Update STATE_FILE
+            ├── Status was OK    ──── Set status ALERT ── Fire alert (console + email)
+            └── Status was ALERT ──── Log "already in ALERT state" ── Exit (no repeat)
+                                       (email rate-limit still enforced if alert fires)
 ```
+
+### Status tracking
+
+The script stores the current alert state (`OK` or `ALERT`) in `STATUS_FILE`. This is what prevents repeated notifications on every cron cycle:
+
+- **OK → ALERT**: alert fires (console + email). `STATUS_FILE` is written with `ALERT`.
+- **ALERT → ALERT**: alert is suppressed. `STATUS_FILE` unchanged.
+- **ALERT → OK**: recovery email sent. `STATUS_FILE` is written with `OK`.
+- **OK → OK**: nothing extra. `STATUS_FILE` unchanged.
+
+If `STATUS_FILE` is missing or corrupted, the script treats the state as `OK` and behaves as if starting fresh.
 
 ### Email rate-limiting
 
@@ -272,6 +326,7 @@ The `[hostname]` tag identifies the source when logs from multiple hosts are agg
 ```
 2026-06-20 11:00:01 ALERT /mnt/backup
 2026-06-20 11:00:01 EMAIL sent to ops@example.com dev@example.com
+2026-06-20 12:15:43 RECOVERY EMAIL sent to ops@example.com dev@example.com
 ```
 
 ### Log rotation
@@ -289,6 +344,21 @@ Self-contained — no dependency on `logrotate`. If `find` is not available (min
 | `7` | Keep one week. |
 | `90` | Keep three months. |
 | `0` | No rotation; logs grow indefinitely. |
+
+---
+
+## State files
+
+The script maintains three state files next to itself (all paths are configurable):
+
+| File | Variable | Purpose |
+|---|---|---|
+| `mount-monitor.status` | `STATUS_FILE` | Current alert state: `OK` or `ALERT`. Controls alert deduplication and recovery detection. |
+| `mount-monitor.email.state` | `STATE_FILE` | Unix timestamp of the last sent email. Used for rate-limiting. |
+| `mount-monitor.maintenance` | `MAINTENANCE_FILE` | Presence of this file activates maintenance mode. Created/removed by `--maintenance`. |
+| `mount-monitor.lock` | `LOCK_FILE` | `flock(1)` lock file. Prevents overlapping cron runs. |
+
+All state files are best-effort: if they cannot be created or read (e.g. read-only filesystem), the script degrades gracefully and continues.
 
 ---
 
@@ -385,10 +455,11 @@ STATE_FILE="/mnt/logs/mount-monitor.email.state"
 
 ### Persistence across container restarts
 
-`STATE_FILE` (email rate-limit timestamp) defaults to `/tmp`, which is lost on container restart. This means the first run after a restart may send an email even if one was recently sent. To preserve rate-limiting across restarts, point `STATE_FILE` to a persistent volume:
+`STATE_FILE` (email rate-limit timestamp) and `STATUS_FILE` (alert state) both default to the script directory, which may be lost on container restart. To preserve alert deduplication and rate-limiting across restarts, point both to a persistent volume:
 
 ```bash
 STATE_FILE="/mnt/persistent/mount-monitor.email.state"
+STATUS_FILE="/mnt/persistent/mount-monitor.status"
 ```
 
 ---
@@ -516,12 +587,14 @@ All variables are set inside the script.
 | `MOUNTS` | `("/mnt/data" "/mnt/backup")` | Array of mountpoints to check. |
 | `ALERT_EMAIL` | `""` *(disabled)* | Space-separated list of email recipients. |
 | `EMAIL_INTERVAL` | `3600` | Seconds between emails. |
-| `STATE_FILE` | `/tmp/mount-monitor.email.state` | Last-email timestamp file. |
+| `STATE_FILE` | `<script_dir>/mount-monitor.email.state` | Last-email timestamp file. |
 | `LOG_DIR` | `<script_dir>/logs/` | Log directory. |
 | `ERROR_LOG` | `<LOG_DIR>/mount-monitor-error.log` | Error/alert log. `""` = disabled. |
 | `EXECUTION_LOG` | `<LOG_DIR>/mount-monitor-execution.log` | Execution log. `""` = disabled. |
 | `LOG_RETENTION_DAYS` | `14` | Days to keep logs. `0` = keep forever. |
 | `HOSTNAME_LABEL` | `""` *(auto-detect)* | Custom hostname for alerts/logs. |
+| `STATUS_FILE` | `<script_dir>/mount-monitor.status` | Alert state file (`OK` / `ALERT`). |
+| `MAINTENANCE_FILE` | `<script_dir>/mount-monitor.maintenance` | Maintenance mode marker (auto-managed). |
 
 ---
 
@@ -541,4 +614,4 @@ All variables are set inside the script.
 
 ## License
 
-This script is provided as-is for personal and professional use. 
+This script is provided as-is for personal and professional use.
