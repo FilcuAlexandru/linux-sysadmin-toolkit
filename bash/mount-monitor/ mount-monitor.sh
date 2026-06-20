@@ -106,9 +106,13 @@ DRY_RUN=0
 PROC_READ=0
 declare -A mounted
 
-########################
-# Hostname resolution. #
-########################
+###################################################################
+# Hostname resolution.                                            #
+#   - Returns HOSTNAME_LABEL if set (preferred for containers).   #
+#   - Falls back to the shell's $HOSTNAME variable.               #
+#   - Then tries the hostname(1) command.                         #
+#   - Last resort: returns the literal string "unknown".          #
+###################################################################
 
 resolve_hostname() {
     # Prefer the user-configured label, if any.
@@ -125,17 +129,24 @@ resolve_hostname() {
         echo "unknown"
     fi
 }
-# Resolve once at startup; declared separately from 'readonly' so a failed
-# command substitution isn't masked (see shellcheck SC2155).
+# Resolve once at startup; declared separately from 'readonly' so a failed command substitution isn't masked.
+# See shellcheck SC2155).
 HOST_ID="$(resolve_hostname)"
 readonly HOST_ID
 
 # Colors only when writing to a terminal.
 if [[ -t 1 ]]; then GREEN=$'\e[32m'; RED=$'\e[31m'; RST=$'\e[0m'; else GREEN=""; RED=""; RST=""; fi
 
-############
-# Logging. #
-############
+#######################################################################
+# Logging.                                                            #
+#   - init_logs  : creates LOG_DIR and touches both log files.        #
+#                  If either step fails that log is disabled with a   #
+#                  warning; the script never dies on log failures.    #
+#   - log_to     : appends a timestamped line to a given log file.    #
+#                  Best-effort; silently ignores write errors         #
+#                  (e.g. disk full). Pass the file path as $1,        #
+#                  followed by the message.                           #
+#######################################################################
 
 # Best-effort log initialization: create LOG_DIR and touch the files.
 # If anything fails, disable that log and warn (never die on log issues).
@@ -171,9 +182,17 @@ log_to() {
     printf '%s %s\n' "$(date '+%F %H:%M:%S')" "$*" >> "$file" 2>/dev/null || true
 }
 
-#################
-# Log rotation. #
-#################
+#####################################################################
+# Log rotation.                                                     #
+#   - rotate_one  : archives a single log file when it is older     #
+#                   than LOG_RETENTION_DAYS, then deletes archived  #
+#                   copies that have themselves aged past the same  #
+#                   window. No-ops if logging or find(1) is         #
+#                   unavailable.                                    #
+#   - rotate_logs : calls rotate_one for both log files. Must run   #
+#                   before init_logs so that init_logs's touch()    #
+#                   does not reset file mtimes and prevent rotation. #
+#####################################################################
 
 # Rotate a single log file if older than LOG_RETENTION_DAYS, then prune archives.
 rotate_one() {
@@ -211,12 +230,12 @@ rotate_logs() {
     rotate_one "$EXECUTION_LOG"
 }
 
-############
-# Locking. #
-############
+#################################################################################
+# Locking.                                                                      #
+#   - Prevent overlapping runs (cron safety).                                   #
+#   - Skipped gracefully if flock is unavailable or the file cannot be created. #
+#################################################################################
 
-# Prevent overlapping runs (cron safety).
-# Skipped gracefully if flock is unavailable or the file cannot be created.
 acquire_lock() {
     # No flock available: skip locking rather than fail the whole script.
     command -v flock >/dev/null 2>&1 || return 0
@@ -228,9 +247,19 @@ acquire_lock() {
     flock -n 200 || exit 0
 }
 
-#########################
-# E-Mail rate-limiting. #
-#########################
+################################################################
+# E-Mail rate-limiting.                                        #
+#   - should_send_email : returns 0 (true) if EMAIL_INTERVAL   #
+#                         seconds have elapsed since the last  #
+#                         sent email; returns 1 otherwise.     #
+#                         Always allows sending if STATE_FILE  #
+#                         does not exist or is unreadable.     #
+#   - mark_email_sent   : writes the current epoch timestamp   #
+#                         to STATE_FILE (best-effort).         #
+#   - last_email_age    : returns a human-readable string like #
+#                         "3542s ago" or "never" for use in    #
+#                         logs and dry-run output.             #
+################################################################
 
 # Return 0 if enough time has passed since the last email; 1 otherwise.
 should_send_email() {
@@ -260,9 +289,15 @@ last_email_age() {
     echo "$(( $(date +%s) - last ))s ago"
 }
 
-####################
-# Status tracking. #
-####################
+###############################################################
+# Status tracking.                                            #
+#   - get_status : reads STATUS_FILE and echoes "OK" or       #
+#                  "ALERT". Falls back to "OK" if the file    #
+#                  does not exist, is unreadable, or contains #
+#                  an unexpected value (corruption guard).    #
+#   - set_status : writes the given value ("OK" or "ALERT")   #
+#                  to STATUS_FILE (best-effort, never fatal). #
+###############################################################
 
 get_status() {
     # No status file yet: treat as OK (nothing was ever down).
@@ -280,9 +315,14 @@ set_status() {
     echo "$1" > "$STATUS_FILE" 2>/dev/null || true
 }
 
-#############
-# Recovery. #
-#############
+##################################################################
+# Recovery notification.                                         #
+#   - Called on the ALERT -> OK transition (all mounts back).    #
+#   - No-ops silently if ALERT_EMAIL is unset or mail(1) is      #
+#     missing.                                                   #
+#   - In dry-run mode prints what it would send without actually #
+#     emailing.                                                  #
+##################################################################
 
 send_recovery_mail() {
     # Email disabled: nothing to send.
@@ -304,9 +344,17 @@ send_recovery_mail() {
     log_to "$ERROR_LOG" "RECOVERY EMAIL sent to ${ALERT_EMAIL}"
 }
 
-##########
-# Alert. #
-##########
+#####################################################################
+# Alert.                                                            #
+#   - Emits a console message to stderr (always, never              #
+#     rate-limited).                                                #
+#   - Logs the alert to ERROR_LOG.                                  #
+#   - Optionally sends an email, rate-limited to one message every  #
+#     EMAIL_INTERVAL seconds (default 3600).                        #
+#   - Fully suppressed (console + email) while maintenance mode     #
+#     is active.                                                    #
+#   - In dry-run mode previews all actions without performing them. #
+#####################################################################
 
 # Emit console alerts, log to ERROR_LOG, and optionally send email.
 # Designed as an integration point for Checkmk, Grafana, Prometheus, etc.
@@ -360,9 +408,16 @@ alert() {
     fi
 }
 
-####################
-# Mount detection. #
-####################
+######################################################################
+# Mount detection.                                                   #
+#   - Returns 0 (mounted) or 1 (not mounted) for a given path.       #
+#   - Detection source priority:                                     #
+#       1. /proc/self/mounts (cached in the 'mounted' array at       #
+#          startup; fastest, no subprocess).                         #
+#       2. mountpoint(1) from util-linux (fallback).                 #
+#       3. mount(1) output parsed with awk (second fallback).        #
+#   - Calls die() if no source is available at all.                  #
+######################################################################
 
 # Return 0 if $1 is currently a mountpoint, 1 otherwise.
 # Source preference: /proc/self/mounts (cached) -> mountpoint(1) -> mount(1).
@@ -393,9 +448,13 @@ is_mounted() {
     die "no source available to check mount state (no /proc/self/mounts, no mountpoint, no mount)"
 }
 
-##########################
-# Maintenance toggle.    #
-##########################
+###################################################################
+# Maintenance toggle.                                             #
+#   - Called by --maintenance; exits immediately after toggling.  #
+#   - If MAINTENANCE_FILE exists: removes it (maintenance off).   #
+#   - If MAINTENANCE_FILE is absent: creates it (maintenance on). #
+#   - Dies if the marker file cannot be created.                  #
+###################################################################
 
 toggle_maintenance() {
     if [[ -f "$MAINTENANCE_FILE" ]]; then
@@ -411,9 +470,15 @@ toggle_maintenance() {
     fi
 }
 
-########################
-# Prerequisites check. #
-########################
+######################################################################
+# Prerequisites check.                                               #
+#   - Prints the availability of all required and optional tools,    #
+#     the active configuration, and current runtime state.           #
+#   - Called automatically when --dry-run is used so the operator    #
+#     can verify the environment before a real run.                  #
+#   - Output uses color when stdout is a terminal (OK=green,         #
+#     MISSING/DISABLED=red).                                         #
+######################################################################
 
 # Show the status of every dependency and config setting.
 # Called automatically when --dry-run is used.
@@ -495,9 +560,12 @@ check_prerequisites() {
     echo
 }
 
-########
-# CLI. #
-########
+####################################################
+# CLI helpers.                                     #
+#   - usage : prints the help text to stdout.      #
+#   - die   : prints an error to stderr and exits  #
+#             with code 1.                         #
+####################################################
 
 usage() {
     cat <<USAGE
@@ -542,8 +610,7 @@ done
 
 (( ${#MOUNTS[@]} > 0 )) || die "no mountpoints configured in MOUNTS"
 
-# Serialize concurrent runs first; nothing else should touch shared state
-# (logs, status, lock) before the lock is held.
+# Serialize concurrent runs first; nothing else should touch shared state (logs, status, lock) before the lock is held.
 acquire_lock
 # Rotate before init_logs touches the files (see rotate_logs comment above).
 rotate_logs
@@ -571,8 +638,8 @@ for m in "${MOUNTS[@]}"; do
     fi
 done
 
-# Status-aware alerting: alert once when mounts go down, recover once when
-# they come back. Prevents repeated emails on every cron cycle.
+# Status-aware alerting: alert once when mounts go down, recover once when they come back. 
+# Prevents repeated emails on every cron cycle.
 current_status=$(get_status)
 
 if (( ${#down[@]} > 0 )); then
