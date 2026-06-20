@@ -111,17 +111,24 @@ declare -A mounted
 ########################
 
 resolve_hostname() {
+    # Prefer the user-configured label, if any.
     if [[ -n "$HOSTNAME_LABEL" ]]; then
         echo "$HOSTNAME_LABEL"
+    # Fall back to the shell's $HOSTNAME variable.
     elif [[ -n "${HOSTNAME:-}" ]]; then
         echo "$HOSTNAME"
+    # Fall back to the hostname(1) command.
     elif command -v hostname >/dev/null 2>&1; then
         hostname
+    # Last resort: nothing identifies this host.
     else
         echo "unknown"
     fi
 }
-readonly HOST_ID="$(resolve_hostname)"
+# Resolve once at startup; declared separately from 'readonly' so a failed
+# command substitution isn't masked (see shellcheck SC2155).
+HOST_ID="$(resolve_hostname)"
+readonly HOST_ID
 
 # Colors only when writing to a terminal.
 if [[ -t 1 ]]; then GREEN=$'\e[32m'; RED=$'\e[31m'; RST=$'\e[0m'; else GREEN=""; RED=""; RST=""; fi
@@ -133,18 +140,22 @@ if [[ -t 1 ]]; then GREEN=$'\e[32m'; RED=$'\e[31m'; RST=$'\e[0m'; else GREEN="";
 # Best-effort log initialization: create LOG_DIR and touch the files.
 # If anything fails, disable that log and warn (never die on log issues).
 init_logs() {
+    # Create the shared log directory once, if any logging is enabled.
     if [[ -n "$ERROR_LOG" || -n "$EXECUTION_LOG" ]] && [[ -n "$LOG_DIR" ]]; then
         if ! mkdir -p "$LOG_DIR" 2>/dev/null; then
             echo "Warning: could not create log directory ${LOG_DIR}; logging disabled" >&2
+            # Disable both logs; nothing further can be written safely.
             ERROR_LOG=""
             EXECUTION_LOG=""
             return
         fi
     fi
+    # Touch (and implicitly create) the error log; disable it on failure.
     if [[ -n "$ERROR_LOG" ]] && ! touch "$ERROR_LOG" 2>/dev/null; then
         echo "Warning: could not write ${ERROR_LOG}; error logging disabled" >&2
         ERROR_LOG=""
     fi
+    # Touch (and implicitly create) the execution log; disable it on failure.
     if [[ -n "$EXECUTION_LOG" ]] && ! touch "$EXECUTION_LOG" 2>/dev/null; then
         echo "Warning: could not write ${EXECUTION_LOG}; execution logging disabled" >&2
         EXECUTION_LOG=""
@@ -154,7 +165,9 @@ init_logs() {
 # Append a timestamped line to a log file (best-effort, never fatal).
 log_to() {
     local file=$1; shift
+    # Skip silently if this log is disabled.
     [[ -n "$file" ]] || return 0
+    # Append timestamp + message; ignore write failures (e.g. disk full).
     printf '%s %s\n' "$(date '+%F %H:%M:%S')" "$*" >> "$file" 2>/dev/null || true
 }
 
@@ -165,23 +178,35 @@ log_to() {
 # Rotate a single log file if older than LOG_RETENTION_DAYS, then prune archives.
 rotate_one() {
     local file=$1
+    # Nothing to do if logging is disabled or the file doesn't exist yet.
     [[ -n "$file" && -f "$file" ]] || return 0
+    # Rotation disabled (LOG_RETENTION_DAYS=0 means keep logs forever).
     (( LOG_RETENTION_DAYS > 0 ))   || return 0
+    # Need find(1) to check file age; skip rotation if unavailable.
     command -v find >/dev/null 2>&1 || return 0
 
     local base dir
     base=$(basename "$file")
     dir=$(dirname "$file")
 
+    # Archive the active log if it's older than the retention window.
     if [[ -n $(find "$dir" -maxdepth 1 -name "$base" -mtime +"$LOG_RETENTION_DAYS" 2>/dev/null) ]]; then
-        mv "$file" "${file}.$(date +%F_%H%M%S)" 2>/dev/null || true
+        local archive
+        archive="${file}.$(date +%F_%H%M%S)"
+        mv "$file" "$archive" 2>/dev/null || true
+        # mv preserves the original mtime; reset it so retention below counts
+        # from the archiving date, not from the original file's old mtime.
+        touch "$archive" 2>/dev/null || true
     fi
 
+    # Delete archived copies that have themselves aged past the retention window.
     find "$dir" -maxdepth 1 -type f -name "${base}.*" -mtime +"$LOG_RETENTION_DAYS" -delete 2>/dev/null || true
 }
 
 rotate_logs() {
     (( LOG_RETENTION_DAYS > 0 )) || return 0
+    # Rotate before init_logs touches the files, otherwise the touch resets
+    # their mtime to "now" and the age check above never triggers.
     rotate_one "$ERROR_LOG"
     rotate_one "$EXECUTION_LOG"
 }
@@ -193,9 +218,13 @@ rotate_logs() {
 # Prevent overlapping runs (cron safety).
 # Skipped gracefully if flock is unavailable or the file cannot be created.
 acquire_lock() {
+    # No flock available: skip locking rather than fail the whole script.
     command -v flock >/dev/null 2>&1 || return 0
+    # Lock file can't be created (e.g. read-only filesystem): skip locking.
     touch "$LOCK_FILE" 2>/dev/null   || return 0
+    # Open the lock file on fd 200 for the lifetime of the script.
     exec 200>"$LOCK_FILE"
+    # Non-blocking lock: if another instance holds it, exit quietly.
     flock -n 200 || exit 0
 }
 
@@ -205,18 +234,24 @@ acquire_lock() {
 
 # Return 0 if enough time has passed since the last email; 1 otherwise.
 should_send_email() {
+    # No state file yet: never emailed before, so allow sending.
     [[ -r "$STATE_FILE" ]] || return 0
     local last now
+    # Read the last-sent timestamp; allow sending if it can't be read.
     last=$(< "$STATE_FILE") || return 0
+    # Guard against a corrupted/non-numeric state file.
     [[ "$last" =~ ^[0-9]+$ ]] || return 0
     now=$(date +%s)
+    # True only if EMAIL_INTERVAL seconds have elapsed since the last send.
     (( now - last >= EMAIL_INTERVAL ))
 }
 
+# Record "now" as the last-email timestamp.
 mark_email_sent() {
     date +%s > "$STATE_FILE" 2>/dev/null || true
 }
 
+# Human-readable age of the last sent email, for logs and dry-run output.
 last_email_age() {
     [[ -r "$STATE_FILE" ]] || { echo "never"; return; }
     local last
@@ -230,9 +265,11 @@ last_email_age() {
 ####################
 
 get_status() {
+    # No status file yet: treat as OK (nothing was ever down).
     [[ -r "$STATUS_FILE" ]] || { echo "OK"; return; }
     local status
     status=$(< "$STATUS_FILE") || { echo "OK"; return; }
+    # Only OK/ALERT are valid; anything else (corruption) is treated as OK.
     case "$status" in
         OK|ALERT) echo "$status" ;;
         *)        echo "OK" ;;
@@ -248,17 +285,21 @@ set_status() {
 #############
 
 send_recovery_mail() {
+    # Email disabled: nothing to send.
     [[ -n "$ALERT_EMAIL" ]]              || return 0
+    # No mail(1) command available: can't send.
     command -v mail >/dev/null 2>&1       || return 0
 
     local body="All monitored mountpoints are mounted again on ${HOST_ID}"
 
+    # Preview only; don't actually send mail in dry-run mode.
     if (( DRY_RUN )); then
         echo "[dry-run] would send recovery email to: ${ALERT_EMAIL}"
         return 0
     fi
 
     # shellcheck disable=SC2086
+    # Intentionally unquoted: ALERT_EMAIL may hold multiple space-separated recipients.
     echo "$body" | mail -s "Mount recovery on ${HOST_ID}" $ALERT_EMAIL
     log_to "$ERROR_LOG" "RECOVERY EMAIL sent to ${ALERT_EMAIL}"
 }
@@ -279,8 +320,10 @@ alert() {
         return 0
     fi
 
+    # Always record the alert in the error log, even in dry-run.
     log_to "$ERROR_LOG" "ALERT ${detail}"
 
+    # Preview-only path: show what would happen, change nothing.
     if (( DRY_RUN )); then
         echo "[dry-run] would raise alert: ${detail}"
         if [[ -n "$ALERT_EMAIL" ]]; then
@@ -293,17 +336,22 @@ alert() {
         return 0
     fi
 
+    # Console alert: always shown, never rate-limited.
     echo "ALERT: ${body}" >&2
 
+    # No email configured: console alert is enough.
     [[ -n "$ALERT_EMAIL" ]] || return 0
 
+    # mail(1) missing but email was requested: warn once and move on.
     if ! command -v mail >/dev/null 2>&1; then
         echo "Warning: ALERT_EMAIL is set but 'mail' command was not found" >&2
         return 0
     fi
 
+    # Send the email only if outside the rate-limit window.
     if should_send_email; then
         # shellcheck disable=SC2086
+        # Intentionally unquoted: ALERT_EMAIL may hold multiple space-separated recipients.
         echo "$body" | mail -s "Mount alert on ${HOST_ID}" $ALERT_EMAIL
         mark_email_sent
         log_to "$ERROR_LOG" "EMAIL sent to ${ALERT_EMAIL}"
@@ -341,6 +389,7 @@ is_mounted() {
         return $?
     fi
 
+    # No way at all to determine mount state: fail loudly instead of guessing.
     die "no source available to check mount state (no /proc/self/mounts, no mountpoint, no mount)"
 }
 
@@ -350,10 +399,12 @@ is_mounted() {
 
 toggle_maintenance() {
     if [[ -f "$MAINTENANCE_FILE" ]]; then
+        # Currently on: turn it off.
         rm -f "$MAINTENANCE_FILE"
         echo "Maintenance mode disabled"
         log_to "$EXECUTION_LOG" "Maintenance mode disabled by user"
     else
+        # Currently off: turn it on; die if the marker file can't be created.
         touch "$MAINTENANCE_FILE" 2>/dev/null || die "could not create ${MAINTENANCE_FILE}"
         echo "Maintenance mode enabled"
         log_to "$EXECUTION_LOG" "Maintenance mode enabled by user"
@@ -410,10 +461,10 @@ check_prerequisites() {
     printf '  %-28s %s\n' "Host ID:" "$HOST_ID"
     printf '  %-28s %s\n' "Mounts:" "${MOUNTS[*]}"
     if [[ -n "$ALERT_EMAIL" ]]; then
-        printf '  %-28s %s\n' "Email:" "$ALERT_EMAIL"
-        printf '  %-28s %ss\n' "Email interval:" "$EMAIL_INTERVAL"
+        printf '  %-28s %s\n' "E-Mail:" "$ALERT_EMAIL"
+        printf '  %-28s %ss\n' "E-Mail interval:" "$EMAIL_INTERVAL"
     else
-        printf '  %-28s %b\n' "Email:" "$dis"
+        printf '  %-28s %b\n' "E-Mail:" "$dis"
     fi
     if [[ -n "$ERROR_LOG" ]]; then
         printf '  %-28s %s\n' "Error log:" "$ERROR_LOG"
@@ -474,6 +525,7 @@ USAGE
 
 die() { echo "Error: $*" >&2; exit 1; }
 
+# Parse CLI flags; --maintenance/--version/--help exit immediately.
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --dry-run)     DRY_RUN=1; shift ;;
@@ -490,9 +542,13 @@ done
 
 (( ${#MOUNTS[@]} > 0 )) || die "no mountpoints configured in MOUNTS"
 
+# Serialize concurrent runs first; nothing else should touch shared state
+# (logs, status, lock) before the lock is held.
 acquire_lock
-init_logs
+# Rotate before init_logs touches the files (see rotate_logs comment above).
 rotate_logs
+init_logs
+# Dry-run shows full environment/config diagnostics before previewing actions.
 (( DRY_RUN )) && check_prerequisites
 log_to "$EXECUTION_LOG" "START [${HOST_ID}] checking ${#MOUNTS[@]} mount(s): ${MOUNTS[*]}"
 
@@ -522,6 +578,7 @@ current_status=$(get_status)
 if (( ${#down[@]} > 0 )); then
     log_to "$EXECUTION_LOG" "RESULT ${#down[@]} unmounted: ${down[*]}"
 
+    # Only fire a fresh alert on the OK -> ALERT transition.
     if [[ "$current_status" != "ALERT" ]]; then
         (( DRY_RUN )) || set_status ALERT
         alert "${down[*]}"
@@ -531,6 +588,7 @@ if (( ${#down[@]} > 0 )); then
 else
     log_to "$EXECUTION_LOG" "RESULT all mounted"
 
+    # Only send recovery mail on the ALERT -> OK transition.
     if [[ "$current_status" == "ALERT" ]]; then
         (( DRY_RUN )) || set_status OK
         send_recovery_mail
