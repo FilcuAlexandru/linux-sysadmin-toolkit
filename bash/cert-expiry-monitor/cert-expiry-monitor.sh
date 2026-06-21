@@ -584,9 +584,16 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-#########
-# Main. #
-#########
+##########################################################################
+# Main.                                                                  #
+#   - Validates that at least one certificate source is configured.      #
+#   - Acquires the lock, rotates logs, initializes logging.              #
+#   - In dry-run mode, runs check_prerequisites before anything else.    #
+#   - Collects certificate entries from every enabled source             #
+#     (PEM file, remote TLS, identity JKS, trust JKS, PKCS12).           #
+#   - For each entry: computes days until expiry using parse_epoch(),    #
+#     prints colored status, and fires alert() if below THRESHOLD_DAYS.  #
+##########################################################################
 
 (( ${#CERTS[@]} > 0 )) || die "no certificates configured in CERTS"
 

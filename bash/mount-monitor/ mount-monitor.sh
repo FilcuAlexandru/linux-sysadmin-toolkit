@@ -604,9 +604,18 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-#########
-# Main. #
-#########
+##########################################################################
+# Main.                                                                  #
+#   - Validates that at least one mountpoint is configured.              #
+#   - Acquires the lock, rotates logs, initializes logging.              #
+#   - In dry-run mode, runs check_prerequisites before anything else.    #
+#   - Reads /proc/self/mounts once into an associative array for fast    #
+#     lookups; falls back to mountpoint(1) or mount(1) per call.         #
+#   - Iterates MOUNTS; prints colored status for each.                   #
+#   - Fires alert on the OK -> ALERT transition; sends recovery email    #
+#     on the ALERT -> OK transition. Suppresses repeated notifications   #
+#     while the status remains unchanged between runs.                   #
+##########################################################################
 
 (( ${#MOUNTS[@]} > 0 )) || die "no mountpoints configured in MOUNTS"
 
