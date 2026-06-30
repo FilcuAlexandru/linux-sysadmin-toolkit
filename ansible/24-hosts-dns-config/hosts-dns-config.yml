@@ -1,11 +1,11 @@
 ---
-# ============================================================================
-# 24-hosts-dns-config : Set the hostname and manage /etc/hosts and resolver entries
-# Sets a stable hostname and manages a block of /etc/hosts entries.
-# Optionally writes resolv.conf nameservers (note: systemd-resolved may manage it).
-# Cross-distro: Debian/Ubuntu, RHEL/Rocky/Alma, SUSE/SLES. Idempotent; --check safe.
-# Author: Filcu Alexandru
-# ============================================================================
+#######################################################################################
+# 24-hosts-dns-config : Set the hostname and manage /etc/hosts and resolver entries   #
+# Sets a stable hostname and manages a block of /etc/hosts entries.                   #
+# Optionally writes resolv.conf nameservers (note: systemd-resolved may manage it).   #
+# Cross-distro: Debian/Ubuntu, RHEL/Rocky/Alma, SUSE/SLES. Idempotent; --check safe.  #
+# Author: Filcu Alexandru                                                             #
+#######################################################################################
 
 - name: Configure hostname, /etc/hosts, and DNS
   hosts: "{{ target_hosts | default('all') }}"

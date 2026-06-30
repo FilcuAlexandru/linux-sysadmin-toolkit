@@ -1,11 +1,11 @@
 ---
-# ============================================================================
-# 23-swap-configuration : Create and enable a swap file idempotently
-# Creates a swap file of a configurable size only if it does not exist.
-# Enables it and adds a persistent fstab entry.
-# Cross-distro: Debian/Ubuntu, RHEL/Rocky/Alma, SUSE/SLES. Idempotent; --check safe.
-# Author: Filcu Alexandru
-# ============================================================================
+######################################################################################
+# 23-swap-configuration : Create and enable a swap file idempotently                 #
+# Creates a swap file of a configurable size only if it does not exist.              #
+# Enables it and adds a persistent fstab entry.                                      # 
+# Cross-distro: Debian/Ubuntu, RHEL/Rocky/Alma, SUSE/SLES. Idempotent; --check safe. # 
+# Author: Filcu Alexandru                                                            #
+######################################################################################
 
 - name: Configure a swap file
   hosts: "{{ target_hosts | default('all') }}"

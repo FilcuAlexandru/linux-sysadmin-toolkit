@@ -1,11 +1,11 @@
 ---
-# ============================================================================
-# 25-system-update-reboot : Apply all package updates and reboot only when needed and allowed
-# Updates all packages using each distro family's native module.
-# Reboots only if the system signals one is required and allow_reboot is true.
-# Cross-distro: Debian/Ubuntu, RHEL/Rocky/Alma, SUSE/SLES. Idempotent; --check safe.
-# Author: Filcu Alexandru
-# ============================================================================
+###############################################################################################
+# 25-system-update-reboot : Apply all package updates and reboot only when needed and allowed #
+# Updates all packages using each distro family's native module.                              #
+# Reboots only if the system signals one is required and allow_reboot is true.                #
+# Cross-distro: Debian/Ubuntu, RHEL/Rocky/Alma, SUSE/SLES. Idempotent; --check safe.          #
+# Author: Filcu Alexandru                                                                     #
+###############################################################################################
 
 - name: Patch packages and reboot if required
   hosts: "{{ target_hosts | default('all') }}"
