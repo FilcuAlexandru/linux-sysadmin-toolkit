@@ -218,12 +218,20 @@ def _parse_crontab_file(path: str, owner: str) -> List[Dict]:
     return entries
 
 
+def _safe_listdir(path: str) -> List[str]:
+    """List a directory, returning [] when it cannot be read (e.g. no root)."""
+    try:
+        return os.listdir(path)
+    except OSError:
+        return []
+
+
 def collect_system_crontabs() -> List[Dict]:
     entries = []
     if os.path.isfile("/etc/crontab"):
         entries.extend(_parse_crontab_file("/etc/crontab", "root"))
     if os.path.isdir("/etc/cron.d"):
-        for fname in os.listdir("/etc/cron.d"):
+        for fname in _safe_listdir("/etc/cron.d"):
             fpath = os.path.join("/etc/cron.d", fname)
             if os.path.isfile(fpath):
                 entries.extend(_parse_crontab_file(fpath, "root"))
@@ -236,7 +244,7 @@ def collect_cron_dirs() -> List[Dict]:
         cron_dir = f"/etc/cron.{freq}"
         if not os.path.isdir(cron_dir):
             continue
-        for fname in os.listdir(cron_dir):
+        for fname in _safe_listdir(cron_dir):
             fpath = os.path.join(cron_dir, fname)
             if os.path.isfile(fpath):
                 entries.append({"file": cron_dir, "owner": "root",
@@ -249,7 +257,7 @@ def collect_user_crontabs() -> List[Dict]:
     spool   = "/var/spool/cron/crontabs"
     if not os.path.isdir(spool):
         return entries
-    for user in os.listdir(spool):
+    for user in _safe_listdir(spool):
         entries.extend(_parse_crontab_file(os.path.join(spool, user), user))
     return entries
 
@@ -310,7 +318,7 @@ def main() -> None:
         print(json.dumps({
             "timestamp": _now_iso(), "host": resolve_hostname(),
             "script": SCRIPT_NAME, "version": VERSION, "status": "DRY_RUN",
-            "dry_run": {"cron_d_exists": os.path.isdir("/etc/cron.d"), "spool_exists": os.path.isdir("/var/spool/cron/crontabs"), "maintenance": is_maintenance()},
+            "dry_run": {"cron_d_exists": os.path.isdir("/etc/cron.d"), "spool_exists": os.path.isdir("/var/spool/cron/crontabs"), "running_as_root": (os.geteuid() == 0), "unreadable_paths": [p for p in ("/etc/cron.d", "/var/spool/cron/crontabs") if os.path.exists(p) and not os.access(p, os.R_OK)], "maintenance": is_maintenance()},
             "alerts": [], "duration_seconds": round(time.time() - _start_time, 2),
         }, indent=2))
         sys.exit(0)

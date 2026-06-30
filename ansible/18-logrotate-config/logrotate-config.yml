@@ -1,0 +1,44 @@
+---
+# ============================================================================
+# 18-logrotate-config : Ensure logrotate is installed and deploy an application log policy
+# Installs logrotate and deploys a managed policy for an application's logs.
+# Policy parameters (rotation, retention, compression) are variables.
+# Cross-distro: Debian/Ubuntu, RHEL/Rocky/Alma, SUSE/SLES. Idempotent; --check safe.
+# Author: Filcu Alexandru
+# ============================================================================
+
+- name: Deploy a logrotate policy
+  hosts: "{{ target_hosts | default('all') }}"
+  become: true
+  gather_facts: true
+
+  vars:
+    logrotate_app_name: myapp
+    logrotate_log_glob: /var/log/myapp/*.log
+    logrotate_rotate_count: 14
+    logrotate_frequency: daily
+    logrotate_compress: true
+
+  tasks:
+    - name: Ensure logrotate is installed
+      ansible.builtin.package:
+        name: logrotate
+        state: present
+
+    - name: Deploy the application logrotate policy
+      ansible.builtin.copy:
+        dest: "/etc/logrotate.d/{{ logrotate_app_name }}"
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by Ansible - logrotate-config.
+          {{ logrotate_log_glob }} {
+              {{ logrotate_frequency }}
+              rotate {{ logrotate_rotate_count }}
+              missingok
+              notifempty
+              {{ 'compress' if logrotate_compress else 'nocompress' }}
+              delaycompress
+              copytruncate
+          }

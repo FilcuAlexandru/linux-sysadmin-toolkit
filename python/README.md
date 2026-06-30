@@ -1,50 +1,183 @@
+<div align="center">
+
 # Python SysAdmin Toolkit
 
-20 stdlib-only Python scripts for Linux OS administration.
-Each script in its own folder with a dedicated README.
+### 40 standard-library Python scripts that audit a Linux system and report JSON
 
-## Scripts
+*One numbered folder per task — machine-readable output, ready for a monitoring pipeline.*
 
-| # | Folder | Description |
-|---|---|---|
-| 01 | 01-system-monitor       | CPU, memory, swap, disk, and network metrics |
-| 02 | 02-disk-trend-analyzer  | Linear regression on disk history; ETA-to-full |
-| 03 | 03-network-monitor      | Per-interface throughput, errors, TCP/UDP states |
-| 04 | 04-process-monitor      | Process crashes, D-state, zombies, memory leaks |
-| 05 | 05-user-audit           | User risk scoring across passwd/shadow/sudoers |
-| 06 | 06-ssh-key-audit        | Weak SSH keys, duplicates, missing comments |
-| 07 | 07-open-ports-audit     | Listening ports vs. expected list, port diff |
-| 08 | 08-failed-login-analyzer| Failed SSH logins, top IPs, hourly heatmap |
-| 09 | 09-system-snapshot      | Full system state capture and diff |
-| 10 | 10-package-inventory    | Installed packages cross-distro, install diff |
-| 11 | 11-hardware-inventory   | CPU, memory, disks, interfaces, PCI devices |
-| 12 | 12-service-inventory    | Systemd service states, failed unit detection |
-| 13 | 13-user-manager         | Add/remove/lock/unlock users with audit trail |
-| 14 | 14-backup-manager       | rsync incremental backups with SHA-256 checks |
-| 15 | 15-log-analyzer         | Log patterns, error counts, spike detection |
-| 16 | 16-cron-audit           | All crontabs inventoried, script existence check |
-| 17 | 17-system-report        | Daily aggregated system report |
-| 18 | 18-disk-space-report    | Disk usage with ASCII bars and trend ETAs |
-| 19 | 19-security-report      | Failed logins, open ports, risky users, sudo log |
-| 20 | 20-performance-baseline | Performance baseline capture and deviation alerts |
+![Python](https://img.shields.io/badge/Python-3.6%2B-3776AB?logo=python&logoColor=white)
+![Stdlib](https://img.shields.io/badge/dependencies-stdlib_only-success)
+![Scripts](https://img.shields.io/badge/scripts-40-success)
+![Output](https://img.shields.io/badge/output-JSON-blue)
+![Exit codes](https://img.shields.io/badge/exit-0_OK_%2F_1_ALERT_%2F_2_ERROR-informational)
+![License](https://img.shields.io/badge/license-MIT-blue)
 
-## Requirements
+</div>
 
-- Python 3.6+ (standard library only — no pip installs needed)
-- Linux with `/proc` filesystem
+---
 
-## Usage
+The `python/` section is the **observe-and-report** half of the toolkit. Each script inspects one
+aspect of the system and prints a **JSON document** on stdout, so the result can be piped straight
+into a monitoring system, a dashboard, or `jq`. It uses **only the Python standard library** — no
+`pip install`, no virtualenv — and runs on any host with Python 3.6+. Everything targets
+**SLES, RHEL/Rocky/Alma, Ubuntu, and Debian**.
 
-Every script (except user-manager) follows the same pattern:
+---
+
+## 1. The shared engine
+
+Every script follows the same pattern, so they are interchangeable in operation:
+
+- **JSON on stdout.** A consistent envelope: `timestamp`, `host`, `script`, `version`, `status`,
+  `data`, `alerts`, `duration_seconds`.
+- **Exit codes.** `0` = OK, `1` = ALERT (one or more findings), `2` = ERROR (unexpected failure).
+- **`--dry-run`.** Prints the configuration and current state — including `running_as_root` and any
+  unmet prerequisites — without doing the work.
+- **`--maintenance`** to suppress alerts, **`--version`** to print the version.
+- **Status-aware alerting** with recovery, **email rate-limiting**, **instance locking** via `flock`,
+  and **self-rotating logs** — the same operational behaviour as the Bash section.
+- **Graceful degradation.** Missing tools or unreadable root-only paths downgrade a result rather than
+  crashing; a genuine failure is reported as `status: ERROR` with exit code `2`.
 
 ```bash
-python3 <script>.py              # run, output JSON
-python3 <script>.py --dry-run    # show config without running
-python3 <script>.py --maintenance # toggle maintenance mode
-python3 <script>.py --version    # print version
+python3 01-system-monitor/system-monitor.py | jq .status
 ```
 
-Output is always JSON on stdout. Exit codes: 0=OK, 1=ALERT, 2=ERROR.
+---
+
+## 2. The scripts
+
+### Core monitoring & metrics
+
+| # | Folder | What it reports |
+|---|---|---|
+| 01 | `01-system-monitor` | CPU, memory, swap, disk, and network metrics in one run. |
+| 02 | `02-disk-trend-analyzer` | Linear regression on disk history; ETA-to-full. |
+| 03 | `03-network-monitor` | Per-interface throughput, errors, TCP/UDP states. |
+| 04 | `04-process-monitor` | Process crashes, D-state, zombies, memory leaks. |
+| 34 | `34-disk-io-monitor` | Per-disk read/write throughput from `/proc/diskstats`. |
+| 35 | `35-network-connections-audit` | TCP connection-state histogram with saturation thresholds. |
+| 40 | `40-capacity-forecast` | Linear time-to-full forecast per filesystem. |
+
+### Security & access audits
+
+| # | Folder | What it reports |
+|---|---|---|
+| 05 | `05-user-audit` | User risk scoring across passwd/shadow/sudoers. |
+| 06 | `06-ssh-key-audit` | Weak SSH keys, duplicates, missing comments. |
+| 07 | `07-open-ports-audit` | Listening ports vs. an expected list; port diff. |
+| 08 | `08-failed-login-analyzer` | Failed SSH logins, top IPs, hourly heatmap. |
+| 19 | `19-security-report` | Failed logins, open ports, risky users, sudo log. |
+| 27 | `27-sudoers-audit` | NOPASSWD and broad-grant findings in sudoers. |
+| 28 | `28-suid-audit` | SUID/SGID inventory and world-writable detection. |
+| 29 | `29-listening-services-map` | Listening-socket map; flags wildcard exposure. |
+| 31 | `31-tls-cert-scanner` | On-disk TLS certificate expiry scanning. |
+| 39 | `39-file-integrity-monitor` | SHA-256 baselining of critical files. |
+
+### Inventory & state
+
+| # | Folder | What it reports |
+|---|---|---|
+| 09 | `09-system-snapshot` | Full system-state capture and diff. |
+| 10 | `10-package-inventory` | Installed packages cross-distro; install diff. |
+| 11 | `11-hardware-inventory` | CPU, memory, disks, interfaces, PCI devices. |
+| 12 | `12-service-inventory` | systemd service states; failed-unit detection. |
+| 24 | `24-kernel-module-audit` | Loaded-module inventory and kernel-taint detection. |
+| 25 | `25-systemd-timer-audit` | systemd timer inventory; failed-timer detection. |
+| 32 | `32-process-tree-snapshot` | Process inventory; runaway process-count alert. |
+
+### Configuration & compliance
+
+| # | Folder | What it reports |
+|---|---|---|
+| 16 | `16-cron-audit` | All crontabs inventoried; script-existence check. |
+| 21 | `21-inode-usage-monitor` | Per-filesystem inode usage. |
+| 22 | `22-ntp-sync-audit` | Clock sync and offset across chrony/ntpd/timesyncd. |
+| 23 | `23-firewall-audit` | Detects an active firewall backend. |
+| 26 | `26-mount-options-audit` | nosuid/nodev/noexec hardening on key mounts. |
+| 30 | `30-dns-health-monitor` | DNS resolution success and latency per target. |
+| 36 | `36-package-update-report` | Pending updates across apt/dnf/yum/zypper. |
+| 37 | `37-logrotate-audit` | logrotate targets that match no files. |
+| 38 | `38-sysctl-audit` | sysctl values vs. a hardening baseline. |
+
+### Reports, analysis & operations
+
+| # | Folder | What it does |
+|---|---|---|
+| 13 | `13-user-manager` | Add/remove/lock/unlock users with an audit trail. |
+| 14 | `14-backup-manager` | rsync incremental backups with SHA-256 checks. |
+| 15 | `15-log-analyzer` | Log patterns, error counts, spike detection. |
+| 17 | `17-system-report` | Daily aggregated system report. |
+| 18 | `18-disk-space-report` | Disk usage with ASCII bars and trend ETAs. |
+| 20 | `20-performance-baseline` | Performance baseline capture and deviation alerts. |
+| 33 | `33-memory-leak-detector` | Per-process RSS growth tracking across runs. |
+
+---
+
+## 3. Folder structure
+
+Each script lives in its own numbered folder with a dedicated README:
+
+```
+python/
+├── README.md                     this index
+└── NN-<task>/
+    ├── <task>.py                 the script
+    └── README-<task>.md          purpose, configuration, usage, exit codes
+```
+
+---
+
+## 4. Requirements
+
+- **Python 3.6+** — standard library only, no third-party packages.
+- A Linux host with the `/proc` filesystem. A few audits read root-only paths (e.g. `/etc/shadow`,
+  crontab spools) and report what they could not read when run unprivileged.
+
+---
+
+## 5. Usage
+
+Every script (except `13-user-manager`, which takes subcommands) follows the same pattern:
+
+```bash
+python3 <folder>/<script>.py              # run; prints a JSON result
+python3 <folder>/<script>.py --dry-run    # show config + prerequisites, do nothing
+python3 <folder>/<script>.py --maintenance # toggle maintenance mode
+python3 <folder>/<script>.py --version    # print version
+```
+
+Output is always JSON on stdout. Combine with `jq` to extract fields:
+
+```bash
+python3 21-inode-usage-monitor/inode-usage-monitor.py | jq '.alerts'
+```
+
+---
+
+## 6. Exit codes
+
+| Exit code | Meaning |
+|---|---|
+| `0` | Completed with no alerts (`status: OK`), or the dry-run/maintenance/version paths. |
+| `0` | Another instance already holds the lock (silent exit). |
+| `1` | One or more alert conditions fired (`status: ALERT`). |
+| `2` | An unhandled error occurred (`status: ERROR`); details are in the `alerts` array. |
+
+---
+
+## 7. Quality checks
+
+```bash
+# Compile every script (standard library only).
+python3 -m py_compile */*.py
+
+# Confirm each emits valid JSON.
+for f in */*.py; do python3 "$f" >/dev/null || true; done
+```
+
+---
 
 ## Author
 

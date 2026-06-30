@@ -1,0 +1,53 @@
+---
+# ============================================================================
+# 06-login-banner : Set consistent /etc/issue, issue.net, motd and the SSH banner
+# Deploys a uniform authorized-use banner to console, network, and SSH logins.
+# Wires the SSH Banner directive and validates sshd before reload.
+# Cross-distro: Debian/Ubuntu, RHEL/Rocky/Alma, SUSE/SLES. Idempotent; --check safe.
+# Author: Filcu Alexandru
+# ============================================================================
+
+- name: Deploy legal login banners
+  hosts: "{{ target_hosts | default('all') }}"
+  become: true
+  gather_facts: true
+
+  vars:
+    login_banner_text: |
+      ******************************************************************
+      * Authorized access only. All activity may be monitored and     *
+      * reported. Disconnect immediately if you are not an authorized  *
+      * user.                                                          *
+      ******************************************************************
+    ssh_service_name: "{{ 'ssh' if ansible_os_family == 'Debian' else 'sshd' }}"
+    sshd_config_path: /etc/ssh/sshd_config
+
+  tasks:
+    - name: Deploy console and network login banners
+      ansible.builtin.copy:
+        dest: "{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+        content: "{{ login_banner_text }}"
+      loop:
+        - /etc/issue
+        - /etc/issue.net
+        - /etc/motd
+
+    - name: Point sshd at the network banner
+      ansible.builtin.lineinfile:
+        path: "{{ sshd_config_path }}"
+        regexp: "^#?Banner "
+        line: "Banner /etc/issue.net"
+        owner: root
+        group: root
+        mode: "0600"
+        validate: "/usr/sbin/sshd -t -f %s"
+      notify: Restart ssh
+
+  handlers:
+    - name: Restart ssh
+      ansible.builtin.service:
+        name: "{{ ssh_service_name }}"
+        state: restarted

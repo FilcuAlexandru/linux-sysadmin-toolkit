@@ -1,0 +1,26 @@
+# Runtime artifacts created by the scripts at execution time.
+# None of these belong in version control.
+
+# Per-script state / coordination files
+*.lock
+*.status
+*.email.state
+*.maintenance
+
+# Script-managed history / baseline databases
+*.history.json
+*.baseline.json
+
+# Log output (each script writes under its own logs/ directory)
+logs/
+*.log
+*.log.*
+
+# Python bytecode cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Editor / OS noise
+*~
+.DS_Store

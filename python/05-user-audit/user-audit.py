@@ -272,7 +272,11 @@ def parse_sudoers() -> Dict[str, Dict]:
     if os.path.isfile("/etc/sudoers"):
         files.append("/etc/sudoers")
     if os.path.isdir("/etc/sudoers.d"):
-        for f in os.listdir("/etc/sudoers.d"):
+        try:
+            _sd = os.listdir("/etc/sudoers.d")
+        except OSError:
+            _sd = []
+        for f in _sd:
             files.append(os.path.join("/etc/sudoers.d", f))
     for fpath in files:
         try:
@@ -426,7 +430,7 @@ def main() -> None:
         print(json.dumps({
             "timestamp": _now_iso(), "host": resolve_hostname(),
             "script": SCRIPT_NAME, "version": VERSION, "status": "DRY_RUN",
-            "dry_run": {"min_uid": MIN_UID, "include_system": INCLUDE_SYSTEM_USERS, "shadow_readable": os.access("/etc/shadow", os.R_OK), "sudoers_readable": os.access("/etc/sudoers", os.R_OK)},
+            "dry_run": {"min_uid": MIN_UID, "include_system": INCLUDE_SYSTEM_USERS, "shadow_readable": os.access("/etc/shadow", os.R_OK), "sudoers_readable": os.access("/etc/sudoers", os.R_OK), "running_as_root": (os.geteuid() == 0), "unreadable_paths": [p for p in ("/etc/shadow", "/etc/sudoers", "/etc/sudoers.d") if os.path.exists(p) and not os.access(p, os.R_OK)]},
             "alerts": [], "duration_seconds": round(time.time() - _start_time, 2),
         }, indent=2))
         sys.exit(0)

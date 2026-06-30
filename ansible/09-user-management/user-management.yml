@@ -1,0 +1,65 @@
+---
+# ============================================================================
+# 09-user-management : Create/manage local users with groups, shell, and authorized keys
+# Creates groups and users declaratively from a list.
+# Installs each user's authorized_keys file (builtin modules only).
+# Cross-distro: Debian/Ubuntu, RHEL/Rocky/Alma, SUSE/SLES. Idempotent; --check safe.
+# Author: Filcu Alexandru
+# ============================================================================
+
+- name: Manage local users, groups, and SSH keys
+  hosts: "{{ target_hosts | default('all') }}"
+  become: true
+  gather_facts: true
+
+  vars:
+    managed_groups:
+      - ops
+    managed_users:
+      - name: deploy
+        groups: ops
+        shell: /bin/bash
+        ssh_key: ""
+    managed_users_state: present
+
+  tasks:
+    - name: Ensure groups exist
+      ansible.builtin.group:
+        name: "{{ item }}"
+        state: present
+      loop: "{{ managed_groups }}"
+
+    - name: Ensure users exist
+      ansible.builtin.user:
+        name: "{{ item.name }}"
+        groups: "{{ item.groups | default(omit) }}"
+        shell: "{{ item.shell | default('/bin/bash') }}"
+        state: "{{ managed_users_state }}"
+        create_home: true
+      loop: "{{ managed_users }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Ensure .ssh directories exist
+      ansible.builtin.file:
+        path: "/home/{{ item.name }}/.ssh"
+        state: directory
+        owner: "{{ item.name }}"
+        group: "{{ item.name }}"
+        mode: "0700"
+      loop: "{{ managed_users }}"
+      when: item.ssh_key | default('') | length > 0
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Install authorized_keys for users
+      ansible.builtin.copy:
+        dest: "/home/{{ item.name }}/.ssh/authorized_keys"
+        content: "{{ item.ssh_key }}\n"
+        owner: "{{ item.name }}"
+        group: "{{ item.name }}"
+        mode: "0600"
+      loop: "{{ managed_users }}"
+      when: item.ssh_key | default('') | length > 0
+      loop_control:
+        label: "{{ item.name }}"

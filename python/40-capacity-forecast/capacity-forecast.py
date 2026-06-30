@@ -1,29 +1,22 @@
 #!/usr/bin/env python3
 
-###############################################################################
-# security-report.py                                                          #
-# Aggregates security-relevant data: failed SSH logins with top attacker IPs, #
-# listening ports vs. expected list, high-risk users from /etc/passwd and     #
-# /etc/sudoers, and recent sudo usage from auth logs. Designed as a daily     #
-# security snapshot for Linux systems.                                        #
-# Author: Filcu Alexandru                                                     #
-###############################################################################
+##########################################################################
+# capacity-forecast.py                                                   #
+# Records disk usage history and fits a linear trend per filesystem.     #
+# Projects days until each filesystem fills.                             #
+# Emits JSON; alerts when projected time-to-full is below FORECAST_DAYS. #
+# Author: Filcu Alexandru                                                #
+##########################################################################
 
 import os, sys, json, logging, datetime, fcntl, socket, subprocess
-import time, signal, argparse, re as _re_sec
+import time, signal, argparse
 from typing import Dict, List, Optional, Tuple
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# Expected ports — unexpected ports trigger an alert
-EXPECTED_PORTS         = ["tcp:22", "tcp:80", "tcp:443"]
-
-# Failed login threshold
-FAILED_LOGIN_THRESHOLD = 10   # alert when failed logins in last 24h exceed this
-WINDOW_HOURS           = 24   # hours to look back for failed logins
-
-# User risk
-MIN_UID = 1000   # minimum UID for regular users
+# Thresholds
+FORECAST_DAYS  = 14.0   # alert when projected time-to-full is below this many days
+HISTORY_POINTS = 30     # number of samples retained per filesystem
 
 # E-Mail
 ALERT_EMAIL    = ""          # "ops@example.com" or space-separated list
@@ -36,24 +29,24 @@ LOG_RETENTION_DAYS = 14      # delete .log files older than this; 0 = keep forev
 HOSTNAME_LABEL = ""          # override auto-detected hostname
 
 # Maintenance
-MAINTENANCE_FILE = os.path.join(SCRIPT_DIR, "security-report.maintenance")
+MAINTENANCE_FILE = os.path.join(SCRIPT_DIR, "capacity-forecast.maintenance")
 
 # Locking
-LOCK_FILE = os.path.join(SCRIPT_DIR, "security-report.lock")
+LOCK_FILE = os.path.join(SCRIPT_DIR, "capacity-forecast.lock")
 
 # Status
-STATUS_FILE = os.path.join(SCRIPT_DIR, "security-report.status")
+STATUS_FILE = os.path.join(SCRIPT_DIR, "capacity-forecast.status")
 
 # State
-STATE_FILE = os.path.join(SCRIPT_DIR, "security-report.email.state")
+STATE_FILE = os.path.join(SCRIPT_DIR, "capacity-forecast.email.state")
 
 
 # Script logic below; no changes needed past this line.
 
 VERSION     = "0.1"
-SCRIPT_NAME = "security-report"
-_ERROR_LOG     = os.path.join(SCRIPT_DIR, "security-report-error.log")
-_EXECUTION_LOG = os.path.join(SCRIPT_DIR, "security-report-execution.log")
+SCRIPT_NAME = "capacity-forecast"
+_ERROR_LOG     = os.path.join(SCRIPT_DIR, "capacity-forecast-error.log")
+_EXECUTION_LOG = os.path.join(SCRIPT_DIR, "capacity-forecast-execution.log")
 _start_time    = time.time()
 _lock_fd: Optional[object] = None
 
@@ -206,139 +199,95 @@ def alert(detail: str) -> None:
         log.warning("EMAIL sent to %s", ALERT_EMAIL)
 
 
-
-def collect_failed_logins() -> Dict:
-    since = (datetime.datetime.now() - datetime.timedelta(hours=WINDOW_HOURS)
-             ).strftime("%Y-%m-%d %H:%M:%S")
-    lines = []
+def _read_file(path: str) -> str:
+    """Best-effort text read; returns '' on any error."""
     try:
-        out = subprocess.run(
-            ["journalctl", "_COMM=sshd", f"--since={since}", "--no-pager", "-q"],
-            capture_output=True, text=True, timeout=30).stdout
-        lines = [l for l in out.splitlines()
-                 if _re_sec.search(r"Failed|Invalid|authentication failure", l)]
+        with open(path) as f:
+            return f.read()
     except Exception:
-        pass
-    if not lines and os.path.isfile("/var/log/auth.log"):
-        try:
-            with open("/var/log/auth.log") as f:
-                lines = [l.strip() for l in f
-                         if _re_sec.search(r"Failed password|Invalid user", l)]
-        except (OSError, PermissionError):
-            pass
-    ips: Dict[str, int] = {}
-    for line in lines:
-        m = _re_sec.search(r"from\s+([\d.]+)", line)
-        if m:
-            ips[m.group(1)] = ips.get(m.group(1), 0) + 1
-    top_ips = sorted(ips.items(), key=lambda x: -x[1])[:5]
-    return {"count": len(lines),
-            "top_ips": [{"ip": k, "count": v} for k, v in top_ips],
-            "window_hours": WINDOW_HOURS}
+        return ""
 
 
-def collect_ports() -> Dict:
-    listening = []
+def _run(cmd: List[str], timeout: int = 15) -> str:
+    """Best-effort command runner; returns stdout or '' on any error."""
     try:
-        out = subprocess.run(["ss", "-tlunp"],
-                             capture_output=True, text=True, timeout=10).stdout
-        for line in out.splitlines()[1:]:
-            p = line.split()
-            if len(p) >= 5:
-                port = p[4].rsplit(":", 1)[-1]
-                if port.isdigit():
-                    listening.append(f"{p[0]}:{port}")
+        return subprocess.run(cmd, capture_output=True, text=True,
+                              timeout=timeout, check=False).stdout
     except Exception:
-        pass
-    listening  = sorted(set(listening))
-    unexpected = [p for p in listening if EXPECTED_PORTS and p not in EXPECTED_PORTS]
-    return {"listening": listening, "unexpected": unexpected, "expected": EXPECTED_PORTS}
+        return ""
 
 
-def collect_risky_users() -> Dict:
-    sudo_users: Dict[str, bool] = {}
-    files = []
-    if os.path.isfile("/etc/sudoers"):
-        files.append("/etc/sudoers")
-    if os.path.isdir("/etc/sudoers.d"):
+def _have(binname: str) -> bool:
+    for d in os.environ.get("PATH", "/usr/bin:/bin").split(os.pathsep):
+        if os.path.isfile(os.path.join(d, binname)) and os.access(os.path.join(d, binname), os.X_OK):
+            return True
+    return False
+
+
+def collect_usage() -> Dict[str, Dict[str, int]]:
+    out = _run(["df", "-P", "--block-size=1"])
+    res = {}
+    for line in out.splitlines()[1:]:
+        p = line.split()
+        if len(p) < 6:
+            continue
+        fs, tot, used, _avail, _pc, mnt = p[:6]
+        if fs.startswith(("tmpfs", "devtmpfs", "udev", "overlay", "proc", "sysfs", "cgroup")):
+            continue
         try:
-            _sd = os.listdir("/etc/sudoers.d")
-        except OSError:
-            _sd = []
-        for f in _sd:
-            files.append(os.path.join("/etc/sudoers.d", f))
-    for fpath in files:
-        try:
-            with open(fpath) as f:
-                for line in f:
-                    m = _re_sec.match(
-                        r"^(\w+)\s+ALL\s*=\s*\(ALL(?::ALL)?\)\s*(NOPASSWD:\s*)?ALL",
-                        line.strip(), _re_sec.IGNORECASE)
-                    if m:
-                        sudo_users[m.group(1)] = bool(m.group(2))
-        except (OSError, PermissionError):
-            pass
-    risky = []
+            res[mnt] = {"used": int(used), "total": int(tot)}
+        except ValueError:
+            continue
+    return res
+
+
+def _slope(pts: List[List[float]]) -> float:
+    n = len(pts)
+    sx = sum(p[0] for p in pts)
+    sy = sum(p[1] for p in pts)
+    sxx = sum(p[0] * p[0] for p in pts)
+    sxy = sum(p[0] * p[1] for p in pts)
+    d = n * sxx - sx * sx
+    return (n * sxy - sx * sy) / d if d else 0.0
+
+
+def evaluate() -> Tuple[Dict, List[str]]:
+    hist_path = os.path.join(SCRIPT_DIR, SCRIPT_NAME + ".history.json")
+    now = time.time()
+    cur = collect_usage()
     try:
-        with open("/etc/passwd") as f:
-            for line in f:
-                p = line.strip().split(":")
-                if len(p) < 7 or int(p[2]) < MIN_UID:
-                    continue
-                issues = []
-                if p[0] in sudo_users:
-                    issues.append("sudo_nopasswd" if sudo_users[p[0]] else "sudo_access")
-                if issues:
-                    risky.append({"username": p[0], "uid": int(p[2]),
-                                  "shell": p[6], "issues": issues})
+        with open(hist_path) as f:
+            hist = json.load(f)
+    except Exception:
+        hist = {}
+    alerts, forecasts = [], []
+    for mnt, info in cur.items():
+        pts = hist.get(mnt, [])
+        pts.append([now, info["used"]])
+        pts = pts[-HISTORY_POINTS:]
+        hist[mnt] = pts
+        eta = None
+        if len(pts) >= 3:
+            slope = _slope(pts)  # bytes/sec
+            if slope > 0:
+                free = info["total"] - info["used"]
+                eta = round(free / slope / 86400, 1)
+                forecasts.append({"mount": mnt, "eta_days": eta})
+                if eta < FORECAST_DAYS:
+                    alerts.append(f"{mnt} projected full in {eta} days")
+        if eta is None:
+            forecasts.append({"mount": mnt, "eta_days": None})
+    try:
+        with open(hist_path, "w") as f:
+            json.dump(hist, f)
     except OSError:
         pass
-    return {"risky_users": risky, "total_risky": len(risky)}
-
-
-def collect_sudo_usage() -> List[str]:
-    for source in (["journalctl", "_COMM=sudo", "--since=yesterday", "--no-pager", "-q"],):
-        try:
-            out = subprocess.run(source, capture_output=True, text=True, timeout=15).stdout
-            entries = [l.strip() for l in out.splitlines() if "COMMAND" in l][:20]
-            if entries:
-                return entries
-        except Exception:
-            pass
-    if os.path.isfile("/var/log/auth.log"):
-        try:
-            with open("/var/log/auth.log") as f:
-                return [l.strip() for l in f if "sudo" in l and "COMMAND" in l][-20:]
-        except (OSError, PermissionError):
-            pass
-    return []
-
-
-def _collect_all() -> Tuple[Dict, List[str]]:
-    failed = collect_failed_logins()
-    ports  = collect_ports()
-    users  = collect_risky_users()
-    sudo   = collect_sudo_usage()
-    alerts = []
-    if failed["count"] > FAILED_LOGIN_THRESHOLD:
-        alerts.append(f"{failed['count']} failed SSH logins in last {WINDOW_HOURS}h "
-                      f"(threshold {FAILED_LOGIN_THRESHOLD})")
-    for p in ports["unexpected"]:
-        alerts.append(f"Unexpected open port: {p}")
-    for u in users["risky_users"]:
-        if "sudo_nopasswd" in u.get("issues", []):
-            alerts.append(f"User {u['username']} has NOPASSWD sudo access")
-    return {
-        "failed_logins": failed,
-        "ports":         ports,
-        "risky_users":   users,
-        "recent_sudo":   sudo,
-    }, alerts
-
+    return {"forecasts": forecasts, "forecast_days": FORECAST_DAYS,
+            "samples": {m: len(p) for m, p in hist.items()}}, alerts
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description=SCRIPT_NAME + " — see README.md.")
+    p = argparse.ArgumentParser(description=SCRIPT_NAME + " — see README.")
     p.add_argument("--dry-run",     action="store_true")
     p.add_argument("--maintenance", action="store_true")
     p.add_argument("--version",     action="version", version=f"Version={VERSION}")
@@ -356,7 +305,11 @@ def main() -> None:
         print(json.dumps({
             "timestamp": _now_iso(), "host": resolve_hostname(),
             "script": SCRIPT_NAME, "version": VERSION, "status": "DRY_RUN",
-            "dry_run": {"failed_login_threshold": FAILED_LOGIN_THRESHOLD, "window_hours": WINDOW_HOURS, "expected_ports": EXPECTED_PORTS, "running_as_root": (os.geteuid() == 0), "unreadable_paths": [p for p in ("/etc/sudoers.d", "/var/log/auth.log", "/var/log/secure") if os.path.exists(p) and not os.access(p, os.R_OK)], "maintenance": is_maintenance(), "current_status": get_status()},
+            "dry_run": {"forecast_days": FORECAST_DAYS, "history_points": HISTORY_POINTS,
+                        "running_as_root": (os.geteuid() == 0),
+                        "maintenance": is_maintenance(),
+                        "current_status": get_status(),
+                        "last_email": last_email_age()},
             "alerts": [], "duration_seconds": round(time.time() - _start_time, 2),
         }, indent=2))
         sys.exit(0)
@@ -370,7 +323,7 @@ def main() -> None:
     signal.signal(signal.SIGINT,  _cleanup)
     log.info("START host=%s", resolve_hostname())
     try:
-        data, alerts   = _collect_all()
+        data, alerts   = evaluate()
         current_status = get_status()
         new_status     = "ALERT" if alerts else "OK"
         if alerts and current_status != "ALERT":

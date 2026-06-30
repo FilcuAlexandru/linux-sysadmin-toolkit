@@ -273,7 +273,11 @@ def capture_crontabs() -> Dict[str, List[str]]:
     if os.path.isfile("/etc/crontab"):
         files.append("/etc/crontab")
     if os.path.isdir("/etc/cron.d"):
-        for f in os.listdir("/etc/cron.d"):
+        try:
+            _cd = os.listdir("/etc/cron.d")
+        except OSError:
+            _cd = []
+        for f in _cd:
             files.append(os.path.join("/etc/cron.d", f))
     for cron_file in files:
         try:
@@ -285,7 +289,11 @@ def capture_crontabs() -> Dict[str, List[str]]:
             pass
     spool = "/var/spool/cron/crontabs"
     if os.path.isdir(spool):
-        for user in os.listdir(spool):
+        try:
+            _users = os.listdir(spool)
+        except OSError:
+            _users = []
+        for user in _users:
             try:
                 with open(os.path.join(spool, user)) as f:
                     lines = [l.strip() for l in f if l.strip() and not l.startswith("#")]
@@ -415,7 +423,7 @@ def main() -> None:
         print(json.dumps({
             "timestamp": _now_iso(), "host": resolve_hostname(),
             "script": SCRIPT_NAME, "version": VERSION, "status": "DRY_RUN",
-            "dry_run": {"snapshot_file": SNAPSHOT_FILE, "previous_file": PREVIOUS_FILE, "capture_config": {"packages": CAPTURE_PACKAGES, "services": CAPTURE_SERVICES, "ports": CAPTURE_PORTS, "users": CAPTURE_USERS}, "has_previous": os.path.isfile(SNAPSHOT_FILE)},
+            "dry_run": {"snapshot_file": SNAPSHOT_FILE, "previous_file": PREVIOUS_FILE, "capture_config": {"packages": CAPTURE_PACKAGES, "services": CAPTURE_SERVICES, "ports": CAPTURE_PORTS, "users": CAPTURE_USERS}, "has_previous": os.path.isfile(SNAPSHOT_FILE), "running_as_root": (os.geteuid() == 0), "unreadable_paths": [p for p in ("/etc/cron.d", "/var/spool/cron/crontabs") if os.path.exists(p) and not os.access(p, os.R_OK)]},
             "alerts": [], "duration_seconds": round(time.time() - _start_time, 2),
         }, indent=2))
         sys.exit(0)

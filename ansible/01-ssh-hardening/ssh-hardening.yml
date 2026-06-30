@@ -1,0 +1,59 @@
+---
+# ============================================================================
+# 01-ssh-hardening : Apply a hardened, validated OpenSSH server configuration
+# Enforces secure sshd directives and validates with 'sshd -t' before reload.
+# Restarts SSH only when the configuration actually changes.
+# Cross-distro: Debian/Ubuntu, RHEL/Rocky/Alma, SUSE/SLES. Idempotent; --check safe.
+# Author: Filcu Alexandru
+# ============================================================================
+
+- name: Harden the OpenSSH server configuration
+  hosts: "{{ target_hosts | default('all') }}"
+  become: true
+  gather_facts: true
+
+  vars:
+    ssh_server_package: "{{ 'openssh' if ansible_os_family == 'Suse' else 'openssh-server' }}"
+    ssh_service_name: "{{ 'ssh' if ansible_os_family == 'Debian' else 'sshd' }}"
+    sshd_config_path: /etc/ssh/sshd_config
+    ssh_port: 22
+    ssh_permit_root_login: prohibit-password
+    ssh_password_authentication: "no"
+    ssh_x11_forwarding: "no"
+    ssh_max_auth_tries: 4
+    ssh_client_alive_interval: 300
+    ssh_client_alive_count_max: 2
+
+  tasks:
+    - name: Ensure the OpenSSH server package is installed
+      ansible.builtin.package:
+        name: "{{ ssh_server_package }}"
+        state: present
+
+    - name: Apply hardened sshd directives (validated before save)
+      ansible.builtin.lineinfile:
+        path: "{{ sshd_config_path }}"
+        regexp: "^#?{{ item.key }} "
+        line: "{{ item.key }} {{ item.value }}"
+        state: present
+        owner: root
+        group: root
+        mode: "0600"
+        validate: "/usr/sbin/sshd -t -f %s"
+      loop:
+        - {key: "Port", value: "{{ ssh_port }}"}
+        - {key: "PermitRootLogin", value: "{{ ssh_permit_root_login }}"}
+        - {key: "PasswordAuthentication", value: "{{ ssh_password_authentication }}"}
+        - {key: "X11Forwarding", value: "{{ ssh_x11_forwarding }}"}
+        - {key: "MaxAuthTries", value: "{{ ssh_max_auth_tries }}"}
+        - {key: "ClientAliveInterval", value: "{{ ssh_client_alive_interval }}"}
+        - {key: "ClientAliveCountMax", value: "{{ ssh_client_alive_count_max }}"}
+      loop_control:
+        label: "{{ item.key }}"
+      notify: Restart ssh
+
+  handlers:
+    - name: Restart ssh
+      ansible.builtin.service:
+        name: "{{ ssh_service_name }}"
+        state: restarted

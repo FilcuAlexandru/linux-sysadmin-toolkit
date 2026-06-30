@@ -1,0 +1,39 @@
+---
+# ============================================================================
+# 16-timezone-locale : Configure the system timezone and default locale idempotently
+# Sets the timezone with timedatectl only when it differs from the target.
+# Writes the default locale to /etc/locale.conf.
+# Cross-distro: Debian/Ubuntu, RHEL/Rocky/Alma, SUSE/SLES. Idempotent; --check safe.
+# Author: Filcu Alexandru
+# ============================================================================
+
+- name: Set system timezone and locale
+  hosts: "{{ target_hosts | default('all') }}"
+  become: true
+  gather_facts: true
+
+  vars:
+    system_timezone: UTC
+    system_locale: en_US.UTF-8
+
+  tasks:
+    - name: Read the current timezone
+      ansible.builtin.command:
+        cmd: timedatectl show -p Timezone --value
+      register: tz_current
+      changed_when: false
+      check_mode: false
+
+    - name: Set the system timezone
+      ansible.builtin.command:
+        cmd: "timedatectl set-timezone {{ system_timezone }}"
+      when: tz_current.stdout | trim != system_timezone
+      changed_when: true
+
+    - name: Set the default system locale
+      ansible.builtin.copy:
+        dest: /etc/locale.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: "LANG={{ system_locale }}\n"
