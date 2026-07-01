@@ -201,7 +201,7 @@ Running as root ensures `dmesg`, `ss -tulpn`, and other privileged commands prod
 
 ---
 
-## Collected files
+### Collected files
 
 | Filename | Command | Description |
 |---|---|---|

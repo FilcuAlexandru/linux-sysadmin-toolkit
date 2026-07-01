@@ -1,35 +1,66 @@
 # disk-space-report.py
 
-Reports disk usage with ASCII bar charts and trend data. Outputs structured JSON to stdout on every run. Part of the Python SysAdmin Toolkit.
+disk-space-report.py                                                   # Reports disk space usage for all real filesystems with current usage,  # a visual ASCII bar chart, trend data from disk-trend-history.json,     # and ETA-to-full where history is available. Alerts when any filesystem # exceeds DISK_THRESHOLD or has ETA <= 7 days.                           #.
 
 ---
 
 ## Features
 
-- **JSON output by default** — every run prints structured JSON; no flags needed.
-- **Zero external dependencies** — Python 3.6+ standard library only.
-- **Status-aware alerting** — alerts once on first breach, silent while above threshold, recovery email when cleared.
-- **Email alerts with rate-limiting** — optional `mail(1)` notifications, one per `EMAIL_INTERVAL` seconds, multiple recipients supported.
+- **JSON output** — a single machine-readable document on stdout (`status`, `data`, `alerts`, `duration_seconds`), ready for a monitoring pipeline or `jq`.
+- **Status tracking** — alerts once when a problem appears, stays silent while it persists, and sends a recovery email when it clears.
 - **Maintenance mode** — toggle with `--maintenance`; suppresses all alerts while active.
-- **Instance locking** — `fcntl.flock` prevents overlapping runs; exits silently when locked.
-- **Automatic log rotation** — deletes `.log` files older than `LOG_RETENTION_DAYS` on every run.
-- **Container-ready** — custom hostname labels; graceful degradation on read-only filesystems.
+- **Instance locking** — prevents overlapping runs via `flock(2)`, with a graceful skip when unavailable.
+- **Email alerts with rate-limiting** — optional notifications via `mail(1)`, throttled to a configurable interval (default: 1 per hour). Supports multiple recipients.
+- **Structured logging** — optional execution log (every run) and error log (only issues), with automatic retention-based pruning.
+- **Prerequisites check** — `--dry-run` shows the configuration, the current state, and whether the script is running as root, without performing any work.
+- **Monitoring integration** — the JSON envelope and `alert()` seam plug into Checkmk, Grafana, Prometheus, or any external system.
+- **Container-ready** — custom hostname labels and graceful degradation on read-only filesystems and minimal images.
+- **Self-contained configuration** — all settings live at the top of the script; cron entries stay clean.
+- **Standard library only** — no `pip install`, no virtualenv; runs on any Python 3.6+.
+- **Distro-agnostic** — no package manager and no distro-specific paths beyond the `/proc` filesystem.
 
 ---
 
 ## Requirements
 
-- Python 3.6+
-- Linux with `/proc` filesystem mounted
-- `mail` command (optional) — for email alerts
+- **Python 3.6+** (standard library only — no third-party packages).
+- **A Linux `/proc` filesystem** (standard on all distributions and containers).
+
+Optional (the script warns and continues without them):
+
+- **`mail` command** — for email alerts (`mailutils`, `s-nail`, or similar).
+- **A configured MTA/relay** — for email delivery (Postfix, msmtp, ssmtp, etc.).
+
+External tools this script may call (all optional; degrade gracefully):
+
+- **`df`** — used by this script when available; missing tools degrade the affected check gracefully.
 
 ---
 
 ## Installation
 
+### From Git (recommended)
+
+```bash
+# Clone the entire repository.
+git clone https://github.com/YOUR_USER/linux-sysadmin-toolkit.git
+cd linux-sysadmin-toolkit/python/disk-space-report
+
+# Or fetch just this script with curl.
+curl -fsSL https://raw.githubusercontent.com/YOUR_USER/linux-sysadmin-toolkit/main/python/disk-space-report/disk-space-report.py \
+     -o /opt/scripts/disk-space-report.py
+```
+
+### Manual copy
+
 ```bash
 cp disk-space-report.py /opt/scripts/disk-space-report.py
 chmod +x /opt/scripts/disk-space-report.py
+```
+
+### Verify
+
+```bash
 python3 /opt/scripts/disk-space-report.py --version
 python3 /opt/scripts/disk-space-report.py --dry-run
 ```
@@ -38,93 +69,265 @@ python3 /opt/scripts/disk-space-report.py --dry-run
 
 ## Configuration
 
-All configuration lives at the top of the script, above:
+All configuration is done by editing the variables at the top of the script. The script logic lives
+below a clearly marked separator line (`no changes needed past this line`) — you never need to edit
+anything below it.
 
-```
-# Script logic below; no changes needed past this line.
+**Do not pass configuration variables inline in cron or on the command line.** Edit them in the script
+once; cron entries stay clean.
+
+### Thresholds
+
+```python
+DISK_THRESHOLD = 90.0
+WARN_THRESHOLD = 80.0
 ```
 
-Edit variables above that line only.
+| Variable | Default | Description |
+|---|---|---|
+| `DISK_THRESHOLD` | `90.0` | alert when any filesystem exceeds this percent |
+| `WARN_THRESHOLD` | `80.0` | warning level |
+
+### History (reads disk-trend-analyzer history if available)
+
+```python
+HISTORY_FILE = os.path.join(SCRIPT_DIR, "disk-trend-history.json")
+```
+
+| Variable | Default | Description |
+|---|---|---|
+| `HISTORY_FILE` | `os.path.join(SCRIPT_DIR, "disk-trend-history.json")` | — |
+
+### ASCII bar width
+
+```python
+BAR_WIDTH = 30
+```
+
+| Variable | Default | Description |
+|---|---|---|
+| `BAR_WIDTH` | `30` | — |
+
+### E-Mail
+
+```python
+ALERT_EMAIL = ""
+EMAIL_INTERVAL = 3600
+```
+
+| Variable | Default | Description |
+|---|---|---|
+| `ALERT_EMAIL` | `""` | "ops@example.com" or space-separated list |
+| `EMAIL_INTERVAL` | `3600` | seconds between alert emails |
+
+### Logging
+
+```python
+LOG_RETENTION_DAYS = 14
+```
+
+| Variable | Default | Description |
+|---|---|---|
+| `LOG_RETENTION_DAYS` | `14` | delete .log files older than this; 0 = keep forever |
+
+### Host
+
+```python
+HOSTNAME_LABEL = ""
+```
+
+| Variable | Default | Description |
+|---|---|---|
+| `HOSTNAME_LABEL` | `""` | override auto-detected hostname |
+
+### Maintenance
+
+```python
+MAINTENANCE_FILE = os.path.join(SCRIPT_DIR, "disk-space-report.maintenance")
+```
+
+| Variable | Default | Description |
+|---|---|---|
+| `MAINTENANCE_FILE` | `os.path.join(SCRIPT_DIR, "disk-space-report.maintenance")` | — |
+
+### Locking
+
+```python
+LOCK_FILE = os.path.join(SCRIPT_DIR, "disk-space-report.lock")
+```
+
+| Variable | Default | Description |
+|---|---|---|
+| `LOCK_FILE` | `os.path.join(SCRIPT_DIR, "disk-space-report.lock")` | — |
+
+### Status
+
+```python
+STATUS_FILE = os.path.join(SCRIPT_DIR, "disk-space-report.status")
+```
+
+| Variable | Default | Description |
+|---|---|---|
+| `STATUS_FILE` | `os.path.join(SCRIPT_DIR, "disk-space-report.status")` | — |
+
+### State
+
+```python
+STATE_FILE = os.path.join(SCRIPT_DIR, "disk-space-report.email.state")
+```
+
+| Variable | Default | Description |
+|---|---|---|
+| `STATE_FILE` | `os.path.join(SCRIPT_DIR, "disk-space-report.email.state")` | — |
 
 ---
 
 ## Usage
 
-```bash
-./disk-space-report.py              # run and output JSON to stdout
-./disk-space-report.py --dry-run    # show prerequisites and configuration without running
-./disk-space-report.py --maintenance # toggle maintenance mode on/off
-./disk-space-report.py --version    # print version and exit
-./disk-space-report.py --help       # print help
+```
+Usage: disk-space-report.py [--dry-run] [--maintenance] [--version]
+
+Options:
+  --dry-run       Show configuration, prerequisites, and state without running
+  --maintenance   Toggle maintenance mode (suppresses alerts while active)
+  --version       Show version and exit
 ```
 
-### Output format
+### Basic run
 
-All output is JSON on stdout. Exit codes: `0`=OK, `1`=ALERT, `2`=ERROR.
+```bash
+python3 disk-space-report.py
+```
+
+Output is a JSON document on stdout:
 
 ```json
 {
-  "timestamp": "2026-06-25T10:00:01Z",
-  "host":      "app-prod-01",
-  "script":    "disk-space-report",
-  "version":   "0.1",
-  "status":    "OK",
-  "data":      { ... },
-  "alerts":    [],
-  "duration_seconds": 2.14
+  "timestamp": "2026-06-20T08:00:00Z",
+  "host": "app-prod-01",
+  "script": "disk-space-report",
+  "version": "0.1",
+  "status": "OK",
+  "data": { "...": "script-specific results" },
+  "alerts": [],
+  "duration_seconds": 0.12
 }
+```
+
+`status` is `OK`, `ALERT`, or `ERROR`; the `alerts` array lists any conditions that fired.
+
+### Dry-run
+
+```bash
+python3 disk-space-report.py --dry-run
+```
+
+Prints the active configuration, the current status, whether the process is running as root, and the
+time since the last email — then exits without doing any work or sending anything.
+
+### Maintenance mode
+
+```bash
+# Enable (suppresses all alerts).
+python3 disk-space-report.py --maintenance
+# Output: {"maintenance": "enabled"}
+
+# Disable (alerts resume on next run).
+python3 disk-space-report.py --maintenance
+# Output: {"maintenance": "disabled"}
 ```
 
 ---
 
 ## How it works
 
-1. Acquires an exclusive lock (`fcntl.flock`) — prevents concurrent runs.
-2. Rotates old log files from `SCRIPT_DIR`.
-3. Collects all metrics in one pass.
-4. Evaluates alerts against configured thresholds.
-5. Updates OK/ALERT status and sends email if appropriate.
-6. Prints a complete JSON result to stdout.
-7. Exits with `0`=OK, `1`=ALERT, or `2`=ERROR.
+disk-space-report.py                                                   # Reports disk space usage for all real filesystems with current usage,  # a visual ASCII bar chart, trend data from disk-trend-history.json,     # and ETA-to-full where history is available. Alerts when any filesystem # exceeds DISK_THRESHOLD or has ETA <= 7 days.                           #.
+
+### Alert lifecycle
+
+```
+                    ┌─────────────┐
+                    │  status=OK  │
+                    └──────┬──────┘
+                           │
+                 a check crosses its threshold
+                           │
+                    ┌──────▼──────┐
+                    │ ALERT email │ ──► set status=ALERT
+                    └──────┬──────┘
+                           │
+                 still over threshold (next runs)
+                           │
+                    ┌──────▼──────┐
+                    │   silent    │ ──► exit code 1, no repeat email
+                    └──────┬──────┘
+                           │
+                 back within threshold
+                           │
+                    ┌──────▼────────┐
+                    │RECOVERY email │ ──► set status=OK
+                    └───────────────┘
+```
+
+One alert email when the problem starts, one recovery email when it ends.
+
+### Exit codes
+
+| Exit code | Meaning |
+|---|---|
+| `0` | Completed with no alerts (`status: OK`), or the dry-run/maintenance/version paths. |
+| `0` | Another instance already holds the lock (silent exit to avoid overlap). |
+| `1` | One or more alert conditions fired (`status: ALERT`). |
+| `2` | An unhandled error occurred (`status: ERROR`); details are in the `alerts` array. |
+
+### Email rate-limiting
+
+A Unix timestamp is stored in `STATE_FILE` after each alert email. On the next alert (when
+transitioning from OK to ALERT), the script checks whether `EMAIL_INTERVAL` seconds have passed. This
+is a safety net; status tracking is the primary deduplication mechanism. Recovery emails are never
+rate-limited.
 
 ---
 
 ## Logging
 
-Two log files are written to the same directory as the script:
+The script writes two optional logs next to itself:
 
-| File | Content |
-|---|---|
-| `disk-space-report-execution.log` | Every run: start, result, end. |
-| `disk-space-report-error.log` | Alerts, recovery emails, and errors only. |
+```
+disk-space-report/
+├── disk-space-report.py
+├── disk-space-report.status          # OK / ALERT state
+├── disk-space-report.email.state     # last-email timestamp
+├── disk-space-report.lock            # flock instance lock
+├── disk-space-report.maintenance     # present while maintenance mode is on
+├── disk-space-report-execution.log   # every run (START / END)
+└── disk-space-report-error.log       # alerts, emails, and recoveries only
+```
 
-Both are auto-rotated when older than `LOG_RETENTION_DAYS` days.
+`LOG_RETENTION_DAYS` prunes `.log` files older than the window (default 14 days; `0` = keep forever).
 
 ---
 
-## Integration examples
+## Integration
 
-### Cron (every 5 minutes)
+### Container usage (Kubernetes / Docker)
 
-```cron
-*/5 * * * * /opt/scripts/disk-space-report.py >> /var/log/disk-space-report.json 2>/dev/null
+Set `HOSTNAME_LABEL` to a meaningful name since the container hostname is usually an auto-generated ID:
+
+```python
+HOSTNAME_LABEL = "app-prod-01"
 ```
 
-### Pipe to jq
+On read-only container filesystems, point the state files at a writable volume:
 
-```bash
-python3 disk-space-report.py | jq '.data'
-python3 disk-space-report.py | jq '.alerts[]'
-python3 disk-space-report.py | jq '.status'
+```python
+MAINTENANCE_FILE = "/tmp/disk-space-report.maintenance"
+LOCK_FILE        = "/tmp/disk-space-report.lock"
+STATUS_FILE      = "/tmp/disk-space-report.status"
+STATE_FILE       = "/tmp/disk-space-report.email.state"
 ```
 
-### Checkmk local check
-
-```bash
-cp disk-space-report.py /usr/lib/check_mk_agent/local/disk-space-report.py
-```
-
-### Kubernetes CronJob
+Example Kubernetes CronJob:
 
 ```yaml
 apiVersion: batch/v1
@@ -139,36 +342,102 @@ spec:
         spec:
           containers:
           - name: disk-space-report
-            image: python:3.11-slim
+            image: python:3-slim
             command: ["python3", "/scripts/disk-space-report.py"]
+            env:
+            - name: HOSTNAME_LABEL
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
           restartPolicy: OnFailure
 ```
+
+### Cron
+
+```cron
+*/5 * * * * /usr/bin/python3 /opt/scripts/disk-space-report.py >/dev/null 2>&1
+```
+
+### systemd timer
+
+```ini
+# /etc/systemd/system/disk-space-report.service
+[Unit]
+Description=disk-space-report check
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/scripts/disk-space-report.py
+```
+
+```ini
+# /etc/systemd/system/disk-space-report.timer
+[Unit]
+Description=Run disk-space-report every 5 minutes
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=5min
+
+[Install]
+WantedBy=timers.target
+```
+
+```bash
+sudo systemctl enable --now disk-space-report.timer
+```
+
+### Checkmk (local check)
+
+The JSON output maps directly onto a Checkmk local check; wrap it in a small adapter that emits the
+Checkmk status line, or store the JSON for a piggyback check.
+
+### Grafana / Prometheus (textfile collector)
+
+Convert the JSON `status`/`data` into a metric written to the node-exporter textfile directory:
+
+```bash
+python3 /opt/scripts/disk-space-report.py \
+  | jq -r '"disk-space-report_status{host=\"" + .host + "\"} " + (if .status=="OK" then "0" else "1" end)' \
+  > /var/lib/node_exporter/disk-space-report.prom
+```
+
+---
+
+## Use cases
+
+### Scheduled health check
+
+Run every few minutes from cron or a systemd timer to catch problems early and email the on-call team:
+
+```python
+ALERT_EMAIL = "ops@company.com infra@company.com"
+HOSTNAME_LABEL = "app-prod-01"
+```
+
+### Monitoring pipeline feed
+
+Collect the JSON on a schedule and forward it to your metrics/observability stack; the exit code
+(`0`/`1`/`2`) doubles as a simple pass/alert/error signal for a wrapping job.
 
 ---
 
 ## Configuration reference
 
-### Standard variables (all scripts)
-
 | Variable | Default | Description |
 |---|---|---|
-| `ALERT_EMAIL` | `""` | Space-separated email recipients. Leave empty to disable. |
-| `EMAIL_INTERVAL` | `3600` | Seconds between alert emails. |
-| `LOG_RETENTION_DAYS` | `14` | Delete `.log` files older than this many days. `0` = keep forever. |
-| `HOSTNAME_LABEL` | `""` | Override auto-detected hostname. Useful in containers. |
-| `MAINTENANCE_FILE` | auto | Path to maintenance mode marker file. |
-| `LOCK_FILE` | auto | Path to instance lock file (flock). |
-| `STATUS_FILE` | auto | Persists OK/ALERT status between runs. |
-| `STATE_FILE` | auto | Stores last-email timestamp for rate-limiting. |
-
-### Domain-specific variables
-
-| Variable | Description |
-|---|---|
-| `DISK_THRESHOLD` | See inline comment in script. |
-| `WARN_THRESHOLD` | See inline comment in script. |
-| `HISTORY_FILE` | See inline comment in script. |
-| `BAR_WIDTH` | See inline comment in script. |
+| `DISK_THRESHOLD` | `90.0` | alert when any filesystem exceeds this percent |
+| `WARN_THRESHOLD` | `80.0` | warning level |
+| `HISTORY_FILE` | `os.path.join(SCRIPT_DIR, "disk-trend-history.json")` | — |
+| `BAR_WIDTH` | `30` | — |
+| `ALERT_EMAIL` | `""` | "ops@example.com" or space-separated list |
+| `EMAIL_INTERVAL` | `3600` | seconds between alert emails |
+| `LOG_RETENTION_DAYS` | `14` | delete .log files older than this; 0 = keep forever |
+| `HOSTNAME_LABEL` | `""` | override auto-detected hostname |
+| `MAINTENANCE_FILE` | `os.path.join(SCRIPT_DIR, "disk-space-report.maintenance")` | — |
+| `LOCK_FILE` | `os.path.join(SCRIPT_DIR, "disk-space-report.lock")` | — |
+| `STATUS_FILE` | `os.path.join(SCRIPT_DIR, "disk-space-report.status")` | — |
+| `STATE_FILE` | `os.path.join(SCRIPT_DIR, "disk-space-report.email.state")` | — |
 
 ---
 
@@ -176,11 +445,9 @@ spec:
 
 | Option | Description |
 |---|---|
-| *(no flags)* | Run normally and print JSON to stdout. |
-| `--dry-run` | Show prerequisites and config without collecting data. |
-| `--maintenance` | Toggle maintenance mode on/off. |
+| `--dry-run` | Show configuration, prerequisites, privilege, and state; perform nothing. |
+| `--maintenance` | Toggle maintenance mode on/off. Alerts are suppressed while active. |
 | `--version` | Print version and exit. |
-| `--help` | Print usage and exit. |
 
 ---
 
@@ -194,10 +461,10 @@ spec:
 
 ## Author
 
-Filcu Alexandru
+**Filcu Alexandru**
 
 ---
 
 ## License
 
-MIT — use freely, retain attribution.
+This script is provided as-is for personal and professional use.

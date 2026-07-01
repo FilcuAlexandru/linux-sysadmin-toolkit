@@ -347,7 +347,7 @@ Self-contained — no dependency on `logrotate`. If `find` is not available (min
 
 ---
 
-## State files
+### State files
 
 The script maintains three state files next to itself (all paths are configurable):
 
@@ -362,7 +362,7 @@ All state files are best-effort: if they cannot be created or read (e.g. read-on
 
 ---
 
-## Container usage
+### Container usage
 
 The script is designed to work inside Docker, Podman, LXC/Incus, and Kubernetes containers without modification.
 

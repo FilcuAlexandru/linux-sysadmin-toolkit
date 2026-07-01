@@ -330,7 +330,7 @@ Self-contained — no dependency on `logrotate`.
 
 ---
 
-## State files
+### State files
 
 The script maintains state files next to itself (all paths are configurable):
 
@@ -490,6 +490,25 @@ Catches any unit failure across the system — services, timers, mounts, sockets
 
 ---
 
+## Configuration reference
+
+All variables are set inside the script.
+
+| Variable | Default | Description |
+|---|---|---|
+| `ALERT_EMAIL` | `""` *(disabled)* | Space-separated list of email recipients. |
+| `EMAIL_INTERVAL` | `3600` | Seconds between alert emails. |
+| `STATE_FILE` | `<script_dir>/systemd-failed-monitor.email.state` | Last alert email timestamp file. |
+| `LOG_DIR` | `<script_dir>/logs/` | Log directory. |
+| `ERROR_LOG` | `<LOG_DIR>/systemd-failed-monitor-error.log` | Error/alert log. `""` = disabled. |
+| `EXECUTION_LOG` | `<LOG_DIR>/systemd-failed-monitor-execution.log` | Execution log. `""` = disabled. |
+| `LOG_RETENTION_DAYS` | `14` | Days to keep logs. `0` = keep forever. |
+| `HOSTNAME_LABEL` | `""` *(auto-detect)* | Custom hostname for alerts/logs. |
+| `STATUS_FILE` | `<script_dir>/systemd-failed-monitor.status` | Per-unit alert state file. |
+| `MAINTENANCE_FILE` | `<script_dir>/systemd-failed-monitor.maintenance` | Maintenance mode marker (auto-managed). |
+
+---
+
 ## CLI reference
 
 | Option | Description |
@@ -507,23 +526,6 @@ Catches any unit failure across the system — services, timers, mounts, sockets
 | Version | Date | Changes |
 |---|---|---|
 | 0.1 | 2026-06 | Initial release. |
-
-## Configuration reference
-
-All variables are set inside the script.
-
-| Variable | Default | Description |
-|---|---|---|
-| `ALERT_EMAIL` | `""` *(disabled)* | Space-separated list of email recipients. |
-| `EMAIL_INTERVAL` | `3600` | Seconds between alert emails. |
-| `STATE_FILE` | `<script_dir>/systemd-failed-monitor.email.state` | Last alert email timestamp file. |
-| `LOG_DIR` | `<script_dir>/logs/` | Log directory. |
-| `ERROR_LOG` | `<LOG_DIR>/systemd-failed-monitor-error.log` | Error/alert log. `""` = disabled. |
-| `EXECUTION_LOG` | `<LOG_DIR>/systemd-failed-monitor-execution.log` | Execution log. `""` = disabled. |
-| `LOG_RETENTION_DAYS` | `14` | Days to keep logs. `0` = keep forever. |
-| `HOSTNAME_LABEL` | `""` *(auto-detect)* | Custom hostname for alerts/logs. |
-| `STATUS_FILE` | `<script_dir>/systemd-failed-monitor.status` | Per-unit alert state file. |
-| `MAINTENANCE_FILE` | `<script_dir>/systemd-failed-monitor.maintenance` | Maintenance mode marker (auto-managed). |
 
 ---
 

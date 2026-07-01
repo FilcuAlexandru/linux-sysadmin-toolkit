@@ -312,7 +312,7 @@ Self-contained — no dependency on `logrotate`. If `find` is not available (min
 
 ---
 
-## State files
+### State files
 
 The script maintains state files next to itself (all paths are configurable):
 
@@ -499,24 +499,6 @@ EXECUTION_LOG=""
 
 ---
 
-## CLI reference
-
-| Option | Description |
-|---|---|
-| `--dry-run` | Preview the deletions without performing them. |
-| `--maintenance` | Toggle maintenance mode on/off. Alerts are suppressed while active. |
-| `--version` | Print version and exit. |
-| `--help` | Print usage information and exit. |
-
-
----
-
-## Version history
-
-| Version | Date | Changes |
-|---|---|---|
-| 0.1 | 2026-06 | Initial release. |
-
 ## Configuration reference
 
 All variables are set inside the script.
@@ -534,6 +516,26 @@ All variables are set inside the script.
 | `LOG_RETENTION_DAYS` | `14` | Days to keep logs. `0` = keep forever. |
 | `HOSTNAME_LABEL` | `""` *(auto-detect)* | Custom hostname for alerts/logs. |
 | `MAINTENANCE_FILE` | `<script_dir>/tmp-cleanup.maintenance` | Maintenance mode marker (auto-managed). |
+
+---
+
+## CLI reference
+
+| Option | Description |
+|---|---|
+| `--dry-run` | Preview the deletions without performing them. |
+| `--maintenance` | Toggle maintenance mode on/off. Alerts are suppressed while active. |
+| `--version` | Print version and exit. |
+| `--help` | Print usage information and exit. |
+
+
+---
+
+## Version history
+
+| Version | Date | Changes |
+|---|---|---|
+| 0.1 | 2026-06 | Initial release. |
 
 ---
 
