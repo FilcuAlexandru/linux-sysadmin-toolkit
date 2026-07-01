@@ -73,14 +73,14 @@ linux-sysadmin-toolkit/
 │       └── README.md
 ├── python/
 │   ├── README.md             index of all 40 scripts
-│   └── NN-<task>/            numbered, one folder per script
+│   └── <task>/               one folder per script
 │       ├── <task>.py
-│       └── README-<task>.md
+│       └── README.md
 └── ansible/
     ├── README.md             index of all 25 playbooks
     ├── ansible.cfg           sane defaults for running the playbooks
     ├── inventory.example.ini sample inventory — copy and edit
-    └── NN-<task>/            numbered, one folder per playbook
+    └── <task>/               one folder per playbook
         ├── <task>.yml
         └── README.md
 ```
@@ -156,14 +156,14 @@ Everything uses `ansible.builtin` modules only — no extra collections to insta
 ./bash/inode-usage-monitor/inode-usage-monitor.sh
 
 # Python — JSON output, exit code signals OK/ALERT/ERROR.
-python3 python/01-system-monitor/system-monitor.py
-python3 python/39-file-integrity-monitor/file-integrity-monitor.py --dry-run
+python3 python/system-monitor/system-monitor.py
+python3 python/file-integrity-monitor/file-integrity-monitor.py --dry-run
 
 # Ansible — always preview with --check first, then apply.
 ansible-playbook -i ansible/inventory.example.ini \
-  ansible/01-ssh-hardening/ssh-hardening.yml --check --diff
+  ansible/ssh-hardening/ssh-hardening.yml --check --diff
 ansible-playbook -i ansible/inventory.example.ini \
-  ansible/01-ssh-hardening/ssh-hardening.yml --limit web
+  ansible/ssh-hardening/ssh-hardening.yml --limit web
 ```
 
 ---

@@ -43,7 +43,7 @@ All 25 playbooks pass `ansible-lint` at the strict **production** profile, plus 
   *would* change without touching the host.
 
 ```bash
-ansible-playbook -i inventory.example.ini 01-ssh-hardening/ssh-hardening.yml --check --diff
+ansible-playbook -i inventory.example.ini ssh-hardening/ssh-hardening.yml --check --diff
 ```
 
 ---
@@ -52,71 +52,71 @@ ansible-playbook -i inventory.example.ini 01-ssh-hardening/ssh-hardening.yml --c
 
 ### Security hardening
 
-| # | Folder | What it enforces |
-|---|---|---|
-| 01 | `01-ssh-hardening` | A hardened, `sshd -t`-validated OpenSSH server configuration. |
-| 02 | `02-sysctl-hardening` | A kernel/network hardening sysctl profile. |
-| 03 | `03-firewall-baseline` | A validated default-deny inbound nftables ruleset. |
-| 04 | `04-auditd-setup` | auditd plus baseline rules for sensitive identity files. |
-| 05 | `05-fail2ban-setup` | Fail2ban with an SSH brute-force jail policy. |
-| 06 | `06-login-banner` | Consistent legal banners (issue, issue.net, motd, SSH). |
-| 07 | `07-password-policy` | Password aging (login.defs) and pwquality complexity. |
-| 08 | `08-disable-unused-services` | Stops and disables risky/unused services, if present. |
+| Folder | What it enforces |
+|---|---|
+| `ssh-hardening` | A hardened, `sshd -t`-validated OpenSSH server configuration. |
+| `sysctl-hardening` | A kernel/network hardening sysctl profile. |
+| `firewall-baseline` | A validated default-deny inbound nftables ruleset. |
+| `auditd-setup` | auditd plus baseline rules for sensitive identity files. |
+| `fail2ban-setup` | Fail2ban with an SSH brute-force jail policy. |
+| `login-banner` | Consistent legal banners (issue, issue.net, motd, SSH). |
+| `password-policy` | Password aging (login.defs) and pwquality complexity. |
+| `disable-unused-services` | Stops and disables risky/unused services, if present. |
 
 ### Users & access
 
-| # | Folder | What it enforces |
-|---|---|---|
-| 09 | `09-user-management` | Local users, groups, shells, and authorized keys (data-driven). |
-| 10 | `10-sudoers-management` | `visudo`-validated drop-ins under `/etc/sudoers.d`. |
-| 11 | `11-ssh-key-deployment` | Appends authorized SSH public keys to existing accounts. |
+| Folder | What it enforces |
+|---|---|
+| `user-management` | Local users, groups, shells, and authorized keys (data-driven). |
+| `sudoers-management` | `visudo`-validated drop-ins under `/etc/sudoers.d`. |
+| `ssh-key-deployment` | Appends authorized SSH public keys to existing accounts. |
 
 ### Packages & updates
 
-| # | Folder | What it enforces |
-|---|---|---|
-| 12 | `12-package-baseline` | A required-present / unwanted-absent package baseline. |
-| 13 | `13-automatic-updates` | Unattended security updates (unattended-upgrades / dnf-automatic). |
-| 14 | `14-repo-management` | APT / YUM repositories, per distro family. |
+| Folder | What it enforces |
+|---|---|
+| `package-baseline` | A required-present / unwanted-absent package baseline. |
+| `automatic-updates` | Unattended security updates (unattended-upgrades / dnf-automatic). |
+| `repo-management` | APT / YUM repositories, per distro family. |
 
 ### Services & system configuration
 
-| # | Folder | What it enforces |
-|---|---|---|
-| 15 | `15-ntp-time-sync` | chrony with a managed NTP server list. |
-| 16 | `16-timezone-locale` | System timezone (idempotently) and default locale. |
-| 17 | `17-journald-config` | journald storage, size cap, and retention. |
-| 18 | `18-logrotate-config` | A logrotate policy for an application's logs. |
-| 19 | `19-cron-jobs` | Scheduled cron jobs, managed declaratively. |
-| 20 | `20-ca-certificates` | Internal CA certificates added to the system trust store. |
+| Folder | What it enforces |
+|---|---|
+| `ntp-time-sync` | chrony with a managed NTP server list. |
+| `timezone-locale` | System timezone (idempotently) and default locale. |
+| `journald-config` | journald storage, size cap, and retention. |
+| `logrotate-config` | A logrotate policy for an application's logs. |
+| `cron-jobs` | Scheduled cron jobs, managed declaratively. |
+| `ca-certificates` | Internal CA certificates added to the system trust store. |
 
 ### Storage
 
-| # | Folder | What it enforces |
-|---|---|---|
-| 21 | `21-lvm-volume` | A VG/LV, filesystem, and mount — guarded against data loss. |
-| 22 | `22-fstab-mounts` | `/etc/fstab` entries (NFS/local) and their mount points. |
-| 23 | `23-swap-configuration` | A swap file, created and persisted idempotently. |
+| Folder | What it enforces |
+|---|---|
+| `lvm-volume` | A VG/LV, filesystem, and mount — guarded against data loss. |
+| `fstab-mounts` | `/etc/fstab` entries (NFS/local) and their mount points. |
+| `swap-configuration` | A swap file, created and persisted idempotently. |
 
 ### Networking & patching
 
-| # | Folder | What it enforces |
-|---|---|---|
-| 24 | `24-hosts-dns-config` | Hostname, a managed `/etc/hosts` block, and optional DNS. |
-| 25 | `25-system-update-reboot` | Full package patching; reboots only when required and permitted. |
+| Folder | What it enforces |
+|---|---|
+| `hosts-dns-config` | Hostname, a managed `/etc/hosts` block, and optional DNS. |
+| `system-update-reboot` | Full package patching; reboots only when required and permitted. |
 
 ---
 
 ## 3. Folder structure
 
-Each playbook lives in its own numbered folder with a dedicated README:
+Each playbook lives in its own folder with a dedicated README — the same layout as the `bash/` section:
 
 ```
 ansible/
 ├── README.md                 this index
 ├── ansible.cfg               sane defaults for running the playbooks
 ├── inventory.example.ini     sample inventory — copy and edit
-└── NN-<task>/
+└── <task>/
     ├── <task>.yml            the playbook
     └── README.md             purpose, variables, usage, idempotency/safety
 ```
@@ -140,13 +140,13 @@ reloads only on change.
 
 ```bash
 # Always preview first.
-ansible-playbook -i inventory.example.ini 01-ssh-hardening/ssh-hardening.yml --check --diff
+ansible-playbook -i inventory.example.ini ssh-hardening/ssh-hardening.yml --check --diff
 
 # Apply to a host group.
-ansible-playbook -i inventory.example.ini 01-ssh-hardening/ssh-hardening.yml --limit web
+ansible-playbook -i inventory.example.ini ssh-hardening/ssh-hardening.yml --limit web
 
 # Override a variable at run time.
-ansible-playbook -i inventory.example.ini 01-ssh-hardening/ssh-hardening.yml \
+ansible-playbook -i inventory.example.ini ssh-hardening/ssh-hardening.yml \
   -e ssh_permit_root_login=no
 ```
 
@@ -159,7 +159,7 @@ Copy `inventory.example.ini` to your own inventory and edit the host groups firs
 - **Idempotent:** re-running changes nothing once the host is in the desired state.
 - **Check-mode safe:** every playbook supports `--check`/`--diff`.
 - **Guarded destructive steps:** storage playbooks never reformat or shrink existing data, and
-  `25-system-update-reboot` only reboots when the OS reports it is required **and** `allow_reboot=true`.
+  `system-update-reboot` only reboots when the OS reports it is required **and** `allow_reboot=true`.
 - **Validated edits:** SSH config is checked with `sshd -t`, sudoers with `visudo -cf`, and the
   firewall ruleset with `nft -c` before being applied.
 

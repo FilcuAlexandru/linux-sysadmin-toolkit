@@ -1,0 +1,63 @@
+---
+################################################################################
+# system-update-reboot.yml                                                     #
+# Apply all package updates and reboot only when needed and allowed.           #
+# Updates all packages using each distro family's native module.               #
+# Reboots only if the system signals one is required and allow_reboot is true. #
+# Supports the four major families: Debian/Ubuntu, RHEL/Rocky/Alma, SUSE/SLES. #
+# Idempotent and --check safe; ansible.builtin modules only.                   #
+# Author: Filcu Alexandru                                                      #
+################################################################################
+
+- name: Patch packages and reboot if required
+  hosts: "{{ target_hosts | default('all') }}"
+  become: true
+  gather_facts: true
+
+  vars:
+    allow_reboot: false
+    reboot_timeout: 600
+
+  tasks:
+    - name: Update all packages (Debian/Ubuntu)
+      ansible.builtin.apt:
+        upgrade: dist
+        update_cache: true
+        cache_valid_time: 3600
+      when: ansible_os_family == 'Debian'
+
+    - name: Update all packages (RHEL family)  # noqa: package-latest
+      ansible.builtin.dnf:
+        name: "*"
+        state: latest
+        update_cache: true
+      when: ansible_os_family == 'RedHat'
+
+    - name: Update all packages (SUSE)
+      ansible.builtin.command:
+        cmd: zypper --non-interactive update
+      register: suse_update
+      changed_when: "'Nothing to do' not in suse_update.stdout"
+      when: ansible_os_family == 'Suse'
+
+    - name: Check whether a reboot is required (Debian/Ubuntu)
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: deb_reboot
+      when: ansible_os_family == 'Debian'
+
+    - name: Check whether a reboot is required (RHEL family)
+      ansible.builtin.command:
+        cmd: needs-restarting -r
+      register: rhel_reboot
+      changed_when: false
+      failed_when: false
+      when: ansible_os_family == 'RedHat'
+
+    - name: Reboot the host if required and permitted
+      ansible.builtin.reboot:
+        reboot_timeout: "{{ reboot_timeout }}"
+      when:
+        - allow_reboot | bool
+        - (ansible_os_family == 'Debian' and deb_reboot.stat.exists | default(false))
+          or (ansible_os_family == 'RedHat' and (rhel_reboot.rc | default(0)) == 1)

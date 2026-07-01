@@ -1,0 +1,40 @@
+---
+################################################################################
+# cron-jobs.yml                                                                #
+# Declaratively manage cron jobs with the builtin cron module.                 #
+# Creates or removes cron jobs from a list using ansible.builtin.cron.         #
+# Each job is keyed by name so it is fully idempotent.                         #
+# Supports the four major families: Debian/Ubuntu, RHEL/Rocky/Alma, SUSE/SLES. #
+# Idempotent and --check safe; ansible.builtin modules only.                   #
+# Author: Filcu Alexandru                                                      #
+################################################################################
+
+- name: Manage scheduled cron jobs
+  hosts: "{{ target_hosts | default('all') }}"
+  become: true
+  gather_facts: true
+
+  vars:
+    cron_jobs:
+      - name: nightly-cleanup
+        minute: "0"
+        hour: "2"
+        job: "/usr/local/bin/cleanup.sh"
+        user: root
+        state: present
+
+  tasks:
+    - name: Manage cron jobs
+      ansible.builtin.cron:
+        name: "{{ item.name }}"
+        minute: "{{ item.minute | default('*') }}"
+        hour: "{{ item.hour | default('*') }}"
+        day: "{{ item.day | default('*') }}"
+        month: "{{ item.month | default('*') }}"
+        weekday: "{{ item.weekday | default('*') }}"
+        job: "{{ item.job }}"
+        user: "{{ item.user | default('root') }}"
+        state: "{{ item.state | default('present') }}"
+      loop: "{{ cron_jobs }}"
+      loop_control:
+        label: "{{ item.name }}"

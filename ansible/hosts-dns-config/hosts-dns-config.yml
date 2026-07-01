@@ -1,0 +1,55 @@
+---
+#####################################################################################
+# hosts-dns-config.yml                                                              #
+# Set the hostname and manage /etc/hosts and resolver entries.                      #
+# Sets a stable hostname and manages a block of /etc/hosts entries.                 #
+# Optionally writes resolv.conf nameservers (note: systemd-resolved may manage it). #
+# Supports the four major families: Debian/Ubuntu, RHEL/Rocky/Alma, SUSE/SLES.      #
+# Idempotent and --check safe; ansible.builtin modules only.                        #
+# Author: Filcu Alexandru                                                           #
+#####################################################################################
+
+- name: Configure hostname, /etc/hosts, and DNS
+  hosts: "{{ target_hosts | default('all') }}"
+  become: true
+  gather_facts: true
+
+  vars:
+    system_hostname: ""
+    hosts_entries:
+      - "127.0.1.1 {{ ansible_hostname }}"
+    manage_resolv_conf: false
+    dns_nameservers:
+      - 1.1.1.1
+      - 9.9.9.9
+
+  tasks:
+    - name: Set the system hostname
+      ansible.builtin.hostname:
+        name: "{{ system_hostname }}"
+      when: system_hostname | length > 0
+
+    - name: Manage a block of /etc/hosts entries
+      ansible.builtin.blockinfile:
+        path: /etc/hosts
+        marker: "# {mark} ANSIBLE MANAGED HOSTS"
+        block: |
+          {% for entry in hosts_entries %}
+          {{ entry }}
+          {% endfor %}
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Manage resolv.conf nameservers
+      ansible.builtin.copy:
+        dest: /etc/resolv.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by Ansible - hosts-dns-config.
+          {% for ns in dns_nameservers %}
+          nameserver {{ ns }}
+          {% endfor %}
+      when: manage_resolv_conf | bool

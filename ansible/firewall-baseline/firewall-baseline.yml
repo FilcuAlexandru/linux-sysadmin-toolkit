@@ -1,0 +1,69 @@
+---
+#####################################################################################
+# firewall-baseline.yml                                                             #
+# Install nftables and enforce a default-deny inbound ruleset.                      #
+# Deploys a managed /etc/nftables.conf with default-deny inbound and an allow-list. #
+# Uses nftables, which is available across all modern distributions.                #
+# Supports the four major families: Debian/Ubuntu, RHEL/Rocky/Alma, SUSE/SLES.      #
+# Idempotent and --check safe; ansible.builtin modules only.                        #
+# Author: Filcu Alexandru                                                           #
+#####################################################################################
+
+- name: Configure an nftables firewall baseline
+  hosts: "{{ target_hosts | default('all') }}"
+  become: true
+  gather_facts: true
+
+  vars:
+    firewall_allowed_tcp_ports:
+      - 22
+    firewall_allowed_udp_ports: []
+    nftables_conf_path: /etc/nftables.conf
+
+  tasks:
+    - name: Ensure nftables is installed
+      ansible.builtin.package:
+        name: nftables
+        state: present
+
+    - name: Deploy the nftables baseline ruleset
+      ansible.builtin.copy:
+        dest: "{{ nftables_conf_path }}"
+        owner: root
+        group: root
+        mode: "0600"
+        content: |
+          #!/usr/sbin/nft -f
+          # Managed by Ansible - firewall-baseline. Default-deny inbound.
+          flush ruleset
+          table inet filter {
+            chain input {
+              type filter hook input priority 0; policy drop;
+              ct state established,related accept
+              iif "lo" accept
+              ip protocol icmp accept
+              ip6 nexthdr ipv6-icmp accept
+          {% for port in firewall_allowed_tcp_ports %}
+              tcp dport {{ port }} accept
+          {% endfor %}
+          {% for port in firewall_allowed_udp_ports %}
+              udp dport {{ port }} accept
+          {% endfor %}
+            }
+            chain forward { type filter hook forward priority 0; policy drop; }
+            chain output { type filter hook output priority 0; policy accept; }
+          }
+        validate: "nft -c -f %s"
+      notify: Reload nftables
+
+    - name: Ensure nftables is enabled and started
+      ansible.builtin.service:
+        name: nftables
+        state: started
+        enabled: true
+
+  handlers:
+    - name: Reload nftables
+      ansible.builtin.service:
+        name: nftables
+        state: reloaded

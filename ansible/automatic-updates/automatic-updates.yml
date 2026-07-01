@@ -1,0 +1,51 @@
+---
+################################################################################
+# automatic-updates.yml                                                        #
+# Configure unattended-upgrades (Debian) or dnf-automatic (RHEL).              #
+# Enables automatic security updates using each family's native mechanism.     #
+# Debian/Ubuntu: unattended-upgrades. RHEL family: dnf-automatic timer.        #
+# Supports the four major families: Debian/Ubuntu, RHEL/Rocky/Alma, SUSE/SLES. #
+# Idempotent and --check safe; ansible.builtin modules only.                   #
+# Author: Filcu Alexandru                                                      #
+################################################################################
+
+- name: Enable unattended security updates
+  hosts: "{{ target_hosts | default('all') }}"
+  become: true
+  gather_facts: true
+
+  vars:
+    auto_updates_enabled: true
+
+  tasks:
+    - name: Configure unattended-upgrades (Debian/Ubuntu)
+      when: ansible_os_family == 'Debian'
+      block:
+        - name: Install unattended-upgrades
+          ansible.builtin.package:
+            name: unattended-upgrades
+            state: present
+
+        - name: Enable periodic updates
+          ansible.builtin.copy:
+            dest: /etc/apt/apt.conf.d/20auto-upgrades
+            owner: root
+            group: root
+            mode: "0644"
+            content: |
+              APT::Periodic::Update-Package-Lists "1";
+              APT::Periodic::Unattended-Upgrade "{{ 1 if auto_updates_enabled else 0 }}";
+
+    - name: Configure dnf-automatic (RHEL family)
+      when: ansible_os_family == 'RedHat'
+      block:
+        - name: Install dnf-automatic
+          ansible.builtin.package:
+            name: dnf-automatic
+            state: present
+
+        - name: Enable and start the dnf-automatic timer
+          ansible.builtin.systemd:
+            name: dnf-automatic.timer
+            state: started
+            enabled: true

@@ -1,0 +1,56 @@
+---
+################################################################################
+# auditd-setup.yml                                                             #
+# Install auditd and deploy a baseline audit rules file.                       #
+# Installs auditd and deploys baseline rules for key system files.             #
+# Loads new rules without a full restart where possible.                       #
+# Supports the four major families: Debian/Ubuntu, RHEL/Rocky/Alma, SUSE/SLES. #
+# Idempotent and --check safe; ansible.builtin modules only.                   #
+# Author: Filcu Alexandru                                                      #
+################################################################################
+
+- name: Install and configure the audit daemon
+  hosts: "{{ target_hosts | default('all') }}"
+  become: true
+  gather_facts: true
+
+  vars:
+    auditd_package: "{{ 'auditd' if ansible_os_family == 'Debian' else 'audit' }}"
+    auditd_rules_path: /etc/audit/rules.d/10-hardening.rules
+    auditd_watch_files:
+      - /etc/passwd
+      - /etc/shadow
+      - /etc/group
+      - /etc/sudoers
+
+  tasks:
+    - name: Ensure auditd is installed
+      ansible.builtin.package:
+        name: "{{ auditd_package }}"
+        state: present
+
+    - name: Deploy baseline audit rules
+      ansible.builtin.copy:
+        dest: "{{ auditd_rules_path }}"
+        owner: root
+        group: root
+        mode: "0640"
+        content: |
+          # Managed by Ansible - auditd-setup.
+          {% for f in auditd_watch_files %}
+          -w {{ f }} -p wa -k identity
+          {% endfor %}
+          -w /var/log/auth.log -p wa -k authlog
+      notify: Reload audit rules
+
+    - name: Ensure auditd is enabled and running
+      ansible.builtin.service:
+        name: auditd
+        state: started
+        enabled: true
+
+  handlers:
+    - name: Reload audit rules
+      ansible.builtin.command:
+        cmd: augenrules --load
+      changed_when: false

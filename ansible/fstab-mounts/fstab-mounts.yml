@@ -1,0 +1,56 @@
+---
+################################################################################
+# fstab-mounts.yml                                                             #
+# Declaratively manage /etc/fstab entries and mount them.                      #
+# Adds or updates fstab entries from a list and ensures mount points exist.    #
+# Mounts everything with 'mount -a' when entries change.                       #
+# Supports the four major families: Debian/Ubuntu, RHEL/Rocky/Alma, SUSE/SLES. #
+# Idempotent and --check safe; ansible.builtin modules only.                   #
+# Author: Filcu Alexandru                                                      #
+################################################################################
+
+- name: Manage filesystem mounts via fstab
+  hosts: "{{ target_hosts | default('all') }}"
+  become: true
+  gather_facts: true
+
+  vars:
+    fstab_mounts:
+      - src: "192.0.2.10:/export/share"
+        path: /mnt/share
+        fstype: nfs
+        opts: "defaults,_netdev"
+        state: present
+
+  tasks:
+    - name: Ensure mount point directories exist
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      loop: "{{ fstab_mounts }}"
+      when: item.state | default('present') == 'present'
+      loop_control:
+        label: "{{ item.path }}"
+
+    - name: Manage fstab entries
+      ansible.builtin.lineinfile:
+        path: /etc/fstab
+        regexp: " {{ item.path }} "
+        line: "{{ item.src }} {{ item.path }} {{ item.fstype }} {{ item.opts | default('defaults') }} 0 0"
+        state: "{{ item.state | default('present') }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop: "{{ fstab_mounts }}"
+      loop_control:
+        label: "{{ item.path }}"
+      notify: Mount all filesystems
+
+  handlers:
+    - name: Mount all filesystems  # noqa: command-instead-of-module
+      ansible.builtin.command:
+        cmd: mount -a
+      changed_when: false

@@ -1,0 +1,44 @@
+---
+################################################################################
+# journald-config.yml                                                          #
+# Enforce journald storage, size cap, and retention.                           #
+# Sets persistent journald storage with a disk cap and retention window.       #
+# Restarts journald on change.                                                 #
+# Supports the four major families: Debian/Ubuntu, RHEL/Rocky/Alma, SUSE/SLES. #
+# Idempotent and --check safe; ansible.builtin modules only.                   #
+# Author: Filcu Alexandru                                                      #
+################################################################################
+
+- name: Configure systemd-journald limits
+  hosts: "{{ target_hosts | default('all') }}"
+  become: true
+  gather_facts: true
+
+  vars:
+    journald_storage: persistent
+    journald_max_use: 500M
+    journald_max_retention: 1month
+    journald_config_path: /etc/systemd/journald.conf
+
+  tasks:
+    - name: Configure journald settings
+      ansible.builtin.lineinfile:
+        path: "{{ journald_config_path }}"
+        regexp: "^#?{{ item.key }}="
+        line: "{{ item.key }}={{ item.value }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - {key: "Storage", value: "{{ journald_storage }}"}
+        - {key: "SystemMaxUse", value: "{{ journald_max_use }}"}
+        - {key: "MaxRetentionSec", value: "{{ journald_max_retention }}"}
+      loop_control:
+        label: "{{ item.key }}"
+      notify: Restart journald
+
+  handlers:
+    - name: Restart journald
+      ansible.builtin.service:
+        name: systemd-journald
+        state: restarted

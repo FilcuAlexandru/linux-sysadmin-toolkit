@@ -1,0 +1,56 @@
+---
+################################################################################
+# fail2ban-setup.yml                                                           #
+# Install Fail2ban and deploy an SSH jail policy.                              #
+# Installs Fail2ban and deploys a managed jail.local for the sshd jail.        #
+# On RHEL family, the EPEL repository may be required for the package.         #
+# Supports the four major families: Debian/Ubuntu, RHEL/Rocky/Alma, SUSE/SLES. #
+# Idempotent and --check safe; ansible.builtin modules only.                   #
+# Author: Filcu Alexandru                                                      #
+################################################################################
+
+- name: Install and configure Fail2ban
+  hosts: "{{ target_hosts | default('all') }}"
+  become: true
+  gather_facts: true
+
+  vars:
+    fail2ban_bantime: 3600
+    fail2ban_findtime: 600
+    fail2ban_maxretry: 5
+    fail2ban_jail_path: /etc/fail2ban/jail.local
+
+  tasks:
+    - name: Ensure Fail2ban is installed
+      ansible.builtin.package:
+        name: fail2ban
+        state: present
+
+    - name: Deploy the Fail2ban jail policy
+      ansible.builtin.copy:
+        dest: "{{ fail2ban_jail_path }}"
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by Ansible - fail2ban-setup.
+          [DEFAULT]
+          bantime = {{ fail2ban_bantime }}
+          findtime = {{ fail2ban_findtime }}
+          maxretry = {{ fail2ban_maxretry }}
+
+          [sshd]
+          enabled = true
+      notify: Restart fail2ban
+
+    - name: Ensure Fail2ban is enabled and running
+      ansible.builtin.service:
+        name: fail2ban
+        state: started
+        enabled: true
+
+  handlers:
+    - name: Restart fail2ban
+      ansible.builtin.service:
+        name: fail2ban
+        state: restarted

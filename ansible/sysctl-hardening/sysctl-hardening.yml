@@ -1,0 +1,47 @@
+---
+##################################################################################
+# sysctl-hardening.yml                                                           #
+# Deploy a kernel hardening sysctl profile and reload it.                        #
+# Writes a managed /etc/sysctl.d drop-in with network and kernel hardening keys. #
+# Reloads sysctl only when the profile changes.                                  #
+# Supports the four major families: Debian/Ubuntu, RHEL/Rocky/Alma, SUSE/SLES.   #
+# Idempotent and --check safe; ansible.builtin modules only.                     #
+# Author: Filcu Alexandru                                                        #
+##################################################################################
+
+- name: Apply kernel hardening via sysctl
+  hosts: "{{ target_hosts | default('all') }}"
+  become: true
+  gather_facts: true
+
+  vars:
+    sysctl_profile_path: /etc/sysctl.d/99-hardening.conf
+    sysctl_hardening:
+      net.ipv4.tcp_syncookies: 1
+      net.ipv4.conf.all.rp_filter: 1
+      net.ipv4.conf.all.accept_redirects: 0
+      net.ipv4.conf.all.send_redirects: 0
+      net.ipv4.conf.all.accept_source_route: 0
+      net.ipv4.ip_forward: 0
+      kernel.randomize_va_space: 2
+      kernel.kptr_restrict: 1
+
+  tasks:
+    - name: Deploy the sysctl hardening profile
+      ansible.builtin.copy:
+        dest: "{{ sysctl_profile_path }}"
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by Ansible - sysctl-hardening. Do not edit by hand.
+          {% for key, value in sysctl_hardening.items() %}
+          {{ key }} = {{ value }}
+          {% endfor %}
+      notify: Reload sysctl
+
+  handlers:
+    - name: Reload sysctl
+      ansible.builtin.command:
+        cmd: "sysctl -p {{ sysctl_profile_path }}"
+      changed_when: false

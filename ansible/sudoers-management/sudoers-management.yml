@@ -1,0 +1,35 @@
+---
+################################################################################
+# sudoers-management.yml                                                       #
+# Deploy /etc/sudoers.d entries validated with visudo.                         #
+# Creates one sudoers drop-in per rule, validated with 'visudo -cf'.           #
+# Mode 0440 as required by sudo; invalid rules are rejected.                   #
+# Supports the four major families: Debian/Ubuntu, RHEL/Rocky/Alma, SUSE/SLES. #
+# Idempotent and --check safe; ansible.builtin modules only.                   #
+# Author: Filcu Alexandru                                                      #
+################################################################################
+
+- name: Manage sudo privileges via validated drop-ins
+  hosts: "{{ target_hosts | default('all') }}"
+  become: true
+  gather_facts: true
+
+  vars:
+    sudoers_rules:
+      - name: ops-team
+        content: "%ops ALL=(ALL) ALL"
+      - name: deploy-restart
+        content: "deploy ALL=(ALL) NOPASSWD: /bin/systemctl restart app"
+
+  tasks:
+    - name: Deploy validated sudoers drop-ins
+      ansible.builtin.copy:
+        dest: "/etc/sudoers.d/{{ item.name }}"
+        content: "# Managed by Ansible - sudoers-management.\n{{ item.content }}\n"
+        owner: root
+        group: root
+        mode: "0440"
+        validate: "visudo -cf %s"
+      loop: "{{ sudoers_rules }}"
+      loop_control:
+        label: "{{ item.name }}"

@@ -1,0 +1,55 @@
+---
+################################################################################
+# ca-certificates.yml                                                          #
+# Deploy internal CA certificates and update the system trust store.           #
+# Copies organization CA certificates into the distro trust anchor directory.  #
+# Runs the appropriate trust-store update command on change.                   #
+# Supports the four major families: Debian/Ubuntu, RHEL/Rocky/Alma, SUSE/SLES. #
+# Idempotent and --check safe; ansible.builtin modules only.                   #
+# Author: Filcu Alexandru                                                      #
+################################################################################
+
+- name: Install custom CA certificates into the trust store
+  hosts: "{{ target_hosts | default('all') }}"
+  become: true
+  gather_facts: true
+
+  vars:
+    ca_trust_dirs:
+      Debian: /usr/local/share/ca-certificates
+      RedHat: /etc/pki/ca-trust/source/anchors
+      Suse: /etc/pki/trust/anchors
+    ca_update_commands:
+      Debian: update-ca-certificates
+      RedHat: update-ca-trust extract
+      Suse: update-ca-certificates
+    ca_trust_dir: "{{ ca_trust_dirs[ansible_os_family] }}"
+    ca_update_command: "{{ ca_update_commands[ansible_os_family] }}"
+    ca_certificates: []
+
+  tasks:
+    - name: Ensure the CA trust directory exists
+      ansible.builtin.file:
+        path: "{{ ca_trust_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install custom CA certificates
+      ansible.builtin.copy:
+        src: "{{ item }}"
+        dest: "{{ ca_trust_dir }}/{{ item | basename }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop: "{{ ca_certificates }}"
+      loop_control:
+        label: "{{ item | basename }}"
+      notify: Update CA trust store
+
+  handlers:
+    - name: Update CA trust store
+      ansible.builtin.command:
+        cmd: "{{ ca_update_command }}"
+      changed_when: true

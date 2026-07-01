@@ -1,0 +1,35 @@
+---
+################################################################################
+# package-baseline.yml                                                         #
+# Ensure baseline packages are present and unwanted ones absent.               #
+# Installs a list of required packages and removes a list of unwanted ones.    #
+# Uses the generic package module for cross-distro compatibility.              #
+# Supports the four major families: Debian/Ubuntu, RHEL/Rocky/Alma, SUSE/SLES. #
+# Idempotent and --check safe; ansible.builtin modules only.                   #
+# Author: Filcu Alexandru                                                      #
+################################################################################
+
+- name: Enforce a package baseline
+  hosts: "{{ target_hosts | default('all') }}"
+  become: true
+  gather_facts: true
+
+  vars:
+    packages_present:
+      - vim
+      - curl
+      - sudo
+      - chrony
+    packages_absent:
+      - telnet
+
+  tasks:
+    - name: Ensure baseline packages are installed
+      ansible.builtin.package:
+        name: "{{ packages_present }}"
+        state: present
+
+    - name: Ensure unwanted packages are removed
+      ansible.builtin.package:
+        name: "{{ packages_absent }}"
+        state: absent

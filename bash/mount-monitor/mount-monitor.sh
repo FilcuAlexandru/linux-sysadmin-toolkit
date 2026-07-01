@@ -16,7 +16,7 @@ readonly VERSION="0.1"
 ######################################################
 # Script directory.                                  #
 #   - Auto-detected.                                 #
-#   - Used as default base for state files and logs. # 
+#   - Used as default base for state files and logs. #
 #   - Override if needed.                            #
 ######################################################
 
@@ -647,7 +647,7 @@ for m in "${MOUNTS[@]}"; do
     fi
 done
 
-# Status-aware alerting: alert once when mounts go down, recover once when they come back. 
+# Status-aware alerting: alert once when mounts go down, recover once when they come back.
 # Prevents repeated emails on every cron cycle.
 current_status=$(get_status)
 
